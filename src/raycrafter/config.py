@@ -53,6 +53,7 @@ class Config:
     pixel_loss_latent_crop: Optional[int] = None
     pixel_loss_t_weighting: str = "none"   # "none" | "one_minus_t"
     gradient_checkpointing: bool = True
+    shard_optimizer: bool = False
 
     # ── Curriculum / synthetic query noise ─────────────────────────────────
     enable_curriculum: bool = False

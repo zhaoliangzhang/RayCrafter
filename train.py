@@ -20,6 +20,7 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import fire
 import torch
 import torch.distributed as dist
+from torch.distributed.optim import ZeroRedundancyOptimizer
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import AdamW
 
@@ -100,8 +101,13 @@ def train(config: str) -> None:
         model.transformer = DDP(xfm, device_ids=[device], broadcast_buffers=False,
                                 find_unused_parameters=False, gradient_as_bucket_view=True)
     train_params = [p for p in xfm.parameters() if p.requires_grad]
-    optimizer = AdamW(train_params, lr=cfg.learning_rate, weight_decay=cfg.weight_decay,
-                      betas=(0.9, 0.999), eps=1e-8)
+    adamw = dict(lr=cfg.learning_rate, weight_decay=cfg.weight_decay, betas=(0.9, 0.999), eps=1e-8)
+    if world_size > 1 and cfg.shard_optimizer:
+        # ZeRO-1: each rank keeps AdamW state for 1/world_size of the parameters and
+        # broadcasts its updated shard. fused=True avoids shard-sized foreach temporaries.
+        optimizer = ZeroRedundancyOptimizer(train_params, optimizer_class=AdamW, fused=True, **adamw)
+    else:
+        optimizer = AdamW(train_params, **adamw)
 
     progress = (make_progress_holder(_progress(cfg, cfg.start_step))
                 if (cfg.enable_curriculum or cfg.noise_levels) else None)
@@ -155,6 +161,7 @@ def train(config: str) -> None:
         if is_main:
             now = time.time()
             log = {"train/loss": out["loss"].item(), "train/lr": lr,
+                   "train/noise_frac": (batch["noise_alpha"] > 0).float().mean().item(),
                    "perf/steps_per_sec": 1.0 / max(now - t_last, 1e-6)}
             t_last = now
             for k in ("latent_loss", "lpips_loss", "l1_pixel_loss", "v_mag"):
@@ -172,11 +179,11 @@ def train(config: str) -> None:
             _log_images(model, src, tgt, ref, batch["noise_alpha"], cams, steps, step, upload=is_main)
 
         if val_loader is not None and step % cfg.val_interval == 0:
-            val_loss = _validate(model, val_loader, device)
+            val_loss, val_loss_nvs = _validate(model, val_loader, device)
             if is_main:
-                print(f"step {step:>7d} | val/loss={val_loss:.4f}", flush=True)
+                print(f"step {step:>7d} | val/loss={val_loss:.4f} | val/loss_nvs={val_loss_nvs:.4f}", flush=True)
                 if use_wandb:
-                    wandb.log({"val/loss": val_loss}, step=step)
+                    wandb.log({"val/loss": val_loss, "val/loss_nvs": val_loss_nvs}, step=step)
 
         if is_main and step % cfg.save_interval == 0:
             save_checkpoint(xfm, str(out_dir / f"transformer_step{step}.safetensors"), cfg.use_lora)
@@ -233,18 +240,22 @@ def _log_images(model, src, tgt, ref, noise_alpha, cams, steps, step, upload: bo
 
 
 @torch.no_grad()
-def _validate(model, loader, device, max_batches: int = 20) -> float:
+def _validate(model, loader, device, max_batches: int = 20):
+    """Mean loss over the val batches as refinement (their degraded renders) and as
+    NVS (pure-noise input, noise_alpha=1; meaningful with noise_space=latent)."""
     model.eval()
-    total, count = 0.0, 0
+    total, total_nvs, count = 0.0, 0.0, 0
     for i, batch in enumerate(loader):
         if i >= max_batches:
             break
         src, tgt, ref = (batch[k].to(device) for k in ("src", "tgt", "ref"))
-        out = model.training_step(src, tgt, ref, noise_alpha=batch["noise_alpha"], **_cameras(batch, device))
-        total += out["loss"].item()
+        cams = _cameras(batch, device)
+        total += model.training_step(src, tgt, ref, noise_alpha=batch["noise_alpha"], **cams)["loss"].item()
+        nvs = torch.ones_like(batch["noise_alpha"])
+        total_nvs += model.training_step(src, tgt, ref, noise_alpha=nvs, **cams)["loss"].item()
         count += 1
     model.train()
-    return total / max(count, 1)
+    return total / max(count, 1), total_nvs / max(count, 1)
 
 
 if __name__ == "__main__":

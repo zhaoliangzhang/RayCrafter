@@ -99,7 +99,7 @@ def build_sample(seq: Sequence, i: int, rng: random.Random, cfg: MultiViewConfig
     """Multi-view sample whose first target view is ``seq.frames[i]``.
 
     Emits ``img{v}.png, gt{v}.png, camera{v}.json`` (v=1..V: frame ``i``, then
-    neighbors within ±window of it) and ``ref{r}.png, ref_camera{r}.json``
+    neighbors within ±window of it, or the nearest frames if none are) and ``ref{r}.png, ref_camera{r}.json``
     (r=1..R): the frame's own ref plus distinct refs of the whole sequence,
     repeated only when the sequence has fewer than R.
     """
@@ -108,14 +108,18 @@ def build_sample(seq: Sequence, i: int, rng: random.Random, cfg: MultiViewConfig
     selected = [frame]
     if cfg.num_views > 1:
         k = cfg.num_views - 1
-        candidates = [f for j, f in enumerate(seq.frames)
-                      if j != i and abs(f.index - frame.index) <= cfg.window]
+        others = [f for j, f in enumerate(seq.frames) if j != i]
+        candidates = [f for f in others if abs(f.index - frame.index) <= cfg.window]
+        if not candidates:
+            # Isolated frame (sequences have index gaps wider than the window):
+            # the nearest other frames, rather than repeating the target.
+            candidates = sorted(others, key=lambda f: abs(f.index - frame.index))[:k]
         if len(candidates) >= k:
             selected += rng.sample(candidates, k=k)
         elif candidates:
             selected += candidates + rng.choices(candidates, k=k - len(candidates))
         else:
-            selected += [frame] * k
+            selected += [frame] * k  # single-frame sequence
 
     # Random slot order: pinning the own (usually nearest) ref to slot 1 let the
     # model copy it and ignore cameras.
