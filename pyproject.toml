@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raycrafter"
+version = "0.1.0"
+description = "Backbone- and camera-agnostic multi-view refinement / novel-view synthesis"
+requires-python = ">=3.10"
+# torch / torchvision: install the CUDA build for your cluster first.
+# FLUX.2 model code: see README (installed separately with --no-deps).
+dependencies = [
+    "torch>=2.4",
+    "torchvision",
+    "einops",
+    "safetensors",
+    "huggingface_hub",
+    "webdataset>=0.2.86",
+    "braceexpand",
+    "numpy",
+    "pillow",
+    "pyyaml",
+    "fire",
+    "lpips",
+]
+
+[project.optional-dependencies]
+wandb = ["wandb"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,226 @@
+# ═════════════════════════════════════════════════════════════════════════════
+# RayCrafter example config — every field, with what it does.
+#
+# Copy this file, edit the data paths (marked TODO), and run:
+#   python train.py --config configs/my_run.yaml
+#   torchrun --standalone --nproc_per_node=2 train.py --config configs/my_run.yaml
+#
+# Values below are the recipe of our FLUX.2-klein-4B + SCoPE + RayRoPE run
+# (1 input view + 6 refs, 432x768, 2x H200, 48 h). Unknown keys are an error,
+# so typos fail loudly. Fields left out take the defaults in src/raycrafter/config.py.
+#
+# Task: given R clean reference images with cameras, and V target cameras,
+# produce the V target images. Each target starts from either a degraded
+# render (refinement) or pure noise (novel-view synthesis); the noise
+# curriculum below mixes the two during training.
+#
+# Token sequence fed to the backbone (one flat self-attention sequence):
+#   [ ref_1 … ref_R | view_1 … view_V ]
+# Cameras are ordered the same way: [ref_1 … ref_R, view_1 … view_V].
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+# ── Backbone ─────────────────────────────────────────────────────────────────
+# Which backbone adapter (src/raycrafter/backbones/<name>.py). Only "flux2" exists.
+backbone: flux2
+# flux.2-klein-4b | flux.2-klein-9b | flux.2-dev. RayRoPE needs 128-d heads
+# (true for all FLUX.2 variants).
+model_variant: flux.2-klein-4b
+# Local .safetensors for the transformer / VAE. null → download from Hugging
+# Face (black-forest-labs/FLUX.2-klein-4B, and ae.safetensors from FLUX.2-dev;
+# both are gated: accept the license on HF and `huggingface-cli login`).
+model_path: null
+ae_path: null
+
+
+# ── LoRA vs full fine-tune ───────────────────────────────────────────────────
+# false: train every transformer weight (our setting).
+# true:  freeze the backbone, train LoRA adapters. The camera modules (SCoPE,
+#        RayRoPE depth heads) are new weights and always train in full; LoRA
+#        checkpoints include them.
+use_lora: false
+lora_rank: 32            # adapter rank r
+lora_alpha: 32.0         # output scale = alpha / rank
+lora_dropout: 0.0
+# nn.Linear layers to wrap, matched by suffix of the module name.
+lora_target_modules: [img_attn.qkv, img_attn.proj, txt_attn.qkv, txt_attn.proj, linear1, linear2]
+
+
+# ── Views ────────────────────────────────────────────────────────────────────
+# V: target views per sample (the current frame + V-1 neighbors from the same
+# sequence within ±window frames). Loss is computed on these only.
+num_views: 1
+# R: clean reference images per sample. If a sequence has fewer distinct refs,
+# some are repeated.
+ref_size: 6
+# RoPE t-coordinate of the refs. Views always sit at t = 0..V-1.
+#   integer s → ref r gets t = s·(r+1), i.e. 10, 20, ..., 60 for s=10. This is
+#               FLUX.2's own reference-image convention, so pretrained
+#               ref-conditioning behavior carries over.
+#   null      → refs continue right after the views (t = V..V+R-1).
+ref_t_scale: 10
+# Reorder refs near→far by camera-center distance to the target view(s) before
+# packing, so the nearest ref gets the first ref t (10), the next 20, ...
+# Camera 0 (the pose anchor below) is then the nearest ref. Needs poses.
+sort_refs_by_distance: true
+
+
+# ── Camera conditioning ──────────────────────────────────────────────────────
+# The two features are independent; any combination is valid. All new weights
+# are zero-initialized, so step 0 reproduces the pretrained backbone exactly.
+# All poses are made relative to camera 0 (the first ref after sorting).
+#
+# camera_condition:
+#   none  → no Plücker conditioning.
+#   scope → SCoPE: each image token gets the Plücker ray (direction, moment)
+#           through its patch center; a learned projection is added to Q and K
+#           after RoPE in every attention layer, plus a per-frame residual on V.
+camera_condition: scope
+# rope_type:
+#   flux    → the backbone's pretrained 4-axis RoPE (t, h, w, l) on all 128 head
+#             channels. Cameras only enter through camera_condition.
+#   rayrope → channels 0:32 keep the pretrained t-axis RoPE (which image);
+#             channels 32:128 are RayRoPE: every token is re-expressed in each
+#             query camera's frame (camera center + 3 rays at a per-token
+#             predicted depth, from a zero-init depth head per block).
+#             Cost: attention runs once per camera (R+V passes per layer).
+rope_type: rayrope
+
+
+# ── Optimization ─────────────────────────────────────────────────────────────
+batch_size: 1                 # per GPU
+learning_rate: 1.0e-5
+weight_decay: 0.01
+# Step budget. With lr_schedule=constant and time_limit_hours, set it high and
+# let the time limit end the run.
+max_steps: 1000000
+warmup_steps: 500             # linear LR warmup from 0
+# cosine:   warmup, then cosine decay to 0 at max_steps.
+# constant: warmup, then learning_rate until the run stops.
+lr_schedule: constant
+# Stop after this many wall-clock hours (from process start, incl. model
+# loading) and write transformer_final.safetensors. Leave margin under the
+# Slurm limit for the final save. null → run until max_steps.
+time_limit_hours: 47.5
+gradient_clip_norm: 1.0       # 0 disables
+# bf16: forward in bf16 autocast, fp32 master weights + AdamW (bf16 weights
+# would round away 1e-5 updates). fp32: everything fp32.
+mixed_precision: bf16
+# Recompute each transformer block in backward (~30% slower, much less memory).
+# Needed for 7 images at 432x768 on a 140 GB H200.
+gradient_checkpointing: true
+
+
+# ── Bridge / flow-matching timesteps ─────────────────────────────────────────
+# z_t = t·z_src + (1-t)·z_tgt, target velocity v = z_src - z_tgt.
+# t=1 is the source (degraded render or noise), t=0 is clean. Inference
+# integrates from t=1 to 0 in num_inference_steps Euler steps.
+t_min: 0.02                   # t ~ U[t_min, t_max] ...
+t_max: 1.0
+# ... except this fraction of samples, which use exactly t=1 (z_t = z_src):
+# the state every inference run starts from, so 1-step sampling is trained.
+t_one_prob: 0.5
+
+
+# ── Losses ───────────────────────────────────────────────────────────────────
+# Always: MSE on the predicted velocity of the view tokens (latent space).
+# Optional pixel losses on the one-step clean estimate x0 = z_t - t·v_pred,
+# decoded by the frozen VAE (gradients flow through the decoder). 0 disables.
+lpips_loss_weight: 10.0       # LPIPS-VGG
+l1_pixel_loss_weight: 1.0
+# Decode only a random (crop × crop)-token window for the pixel losses, to
+# bound decoder memory. null → decode the full image.
+pixel_loss_latent_crop: null
+# none:        same pixel-loss weight for every sample.
+# one_minus_t: scale by (1 - t). Near t=1 the one-step x0 is a conditional
+#              mean (blurry), so LPIPS there fights generation. Note it zeroes
+#              the pixel loss on the t_one_prob samples.
+pixel_loss_t_weighting: none
+
+
+# ── Source curriculum (degraded renders → pure noise) ────────────────────────
+# Each tar is assigned to a bucket. Real buckets come from the `dsim_*`
+# directory name in its path (DreamSim distance of render vs GT, easy→hard;
+# shards outside a dsim_* dir are bucketed by their parent dir). Each entry of
+# noise_levels adds a synthetic bucket noise_<a>: a random tar whose inputs are
+# replaced by noise of strength a (a=1 → pure noise → pure NVS).
+# Bucket order: real buckets (dsim_lt_0.25, dsim_0.25_0.3, dsim_0.3_0.35,
+# dsim_0.35_0.4, dsim_ge_0.4, then any others sorted), then noise_levels.
+# A bucket is drawn per tar (~100 samples), not per sample.
+enable_curriculum: true
+# Bucket probabilities move linearly from start to end over this many steps,
+# then stay at the end. null → over max_steps.
+curriculum_steps: 10000
+# Explicit per-bucket probabilities (normalized; length = number of buckets).
+# Here: start mostly easy real renders, end 25% real (mostly mid-difficulty)
+# + 15% noise_0.9 + 60% pure noise.
+curriculum_start_probs: [0.6398, 0.2015, 0.0227, 0.0180, 0.0180, 0.0500, 0.0500]
+curriculum_end_probs:   [0.0057, 0.0388, 0.1441, 0.0549, 0.0066, 0.1500, 0.6000]
+# Used only when the two lists above are null: a Gaussian over bucket index
+# whose center moves start_center → end_center (0 = first bucket, 1 = last),
+# with width sigma, mixed with a uniform floor of min_mass.
+curriculum_sigma: 0.16
+curriculum_min_mass: 0.10
+curriculum_start_center: 0.0
+curriculum_end_center: 0.52
+# Synthetic noise buckets (see above). null → none.
+noise_levels: [0.9, 1.0]
+# Where the noise goes:
+#   latent: z_src = (1-a)·z_gt + a·N(0, I) in the VAE latent; a=1 is exactly
+#           FLUX's pretraining t=1 noise. Required for mode=nvs in sample.py.
+#   pixel:  input = noise_mode(gt, a) in pixels, then VAE-encoded. VAE(uniform
+#           noise) is a near-constant latent, so it carries little randomness.
+noise_space: latent
+# pixel space only. lerp: (1-a)·gt + a·U[0,1]. additive: clamp(gt + a·N(0,1)).
+noise_mode: lerp
+
+
+# ── Data (WebDataset; format in README) ──────────────────────────────────────
+# One brace-expanded spec or a list of them. `pipe:cat <path>` streams local
+# tars; plain paths / URLs also work. One tar = one or more sequences.
+train_shards:   # TODO: your paths
+  - "pipe:cat /path/to/wds/dsim_lt_0.25/train/pairs-{000000..000033}.tar"
+  - "pipe:cat /path/to/wds/dsim_0.25_0.3/train/pairs-{000000..000023}.tar"
+  - "pipe:cat /path/to/wds/dsim_0.3_0.35/train/pairs-{000000..000026}.tar"
+  - "pipe:cat /path/to/wds/dsim_0.35_0.4/train/pairs-{000000..000024}.tar"
+  - "pipe:cat /path/to/wds/dsim_ge_0.4/train/pairs-{000000..000064}.tar"
+# Validation: up to 20 batches every val_interval (loss only), no curriculum.
+# "" disables validation.
+val_shards:     # TODO: your paths
+  - "pipe:cat /path/to/wds/dsim_lt_0.25/eval/pairs-000000.tar"
+# [H, W] every image is resized to. The VAE then center-crops to a multiple of
+# 16 (432x768 → 27x48 = 1296 tokens per image).
+image_size: [432, 768]
+num_workers: 1                # DataLoader workers per GPU
+# Neighbor views for num_views > 1 are drawn within ±window frames.
+window: 15
+
+
+# ── Logging / checkpoints ────────────────────────────────────────────────────
+output_dir: outputs/klein4b_scope_rayrope   # config.yaml + checkpoints go here
+# Scalars are logged every step (console every 50). Every log_interval steps,
+# sample the current batch with each num_inference_steps and log images
+# (wandb only).
+log_interval: 500
+val_interval: 500
+# Writes transformer_step<N>.safetensors (bf16). Full fine-tune: whole
+# transformer (~8 GB for 4B). LoRA: adapters + camera modules only.
+save_interval: 5000
+use_wandb: false
+wandb_project: raycrafter
+wandb_run_name: klein4b_scope_rayrope
+
+
+# ── Resume ───────────────────────────────────────────────────────────────────
+# Checkpoint to start from (a transformer_*.safetensors from this repo; it
+# must match use_lora / camera_condition / rope_type). Optimizer state is not
+# saved, so AdamW restarts.
+resume_from: null
+# Step that checkpoint finished. Training continues at start_step + 1, so the
+# LR schedule, curriculum and checkpoint names stay on the original timeline.
+start_step: 0
+
+
+# ── Inference ────────────────────────────────────────────────────────────────
+# Euler steps for the training-time image logs (one sample per entry).
+num_inference_steps: [1, 2, 4]

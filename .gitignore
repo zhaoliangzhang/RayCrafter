@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+outputs/
+wandb/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.tar
