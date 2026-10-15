@@ -1,33 +1,36 @@
-"""DreamSim-bucket curriculum for WebDataset shard sampling.
+"""DreamSim-bucket curriculum, drawn per sample.
 
 Mirrors FrameCrafter's ``cleanup_dataset`` schedule: group ``train_shards`` by
-the ``dsim_*`` directory in the path, then sample the next tar with a moving
-Gaussian whose peak slides from easy (``dsim_lt_0.25``) to hard
-(``dsim_ge_0.4``) as training progress goes 0 -> 1.
+the ``dsim_*`` directory in the path, and move the bucket probabilities from
+easy (``dsim_lt_0.25``) to hard (``dsim_ge_0.4``) as training progress goes
+0 -> 1. Optional ``noise_levels`` add synthetic buckets (``noise_0.9``, …) whose
+inputs are replaced by noise of that strength.
 
-Optional ``noise_levels`` add synthetic query-noise buckets (``noise_0.25``, …):
-when one is selected, a random tar is opened and degraded inputs are replaced
-at decode time by ``lerp(gt, uniform_noise, alpha)`` (FrameCrafter-compatible).
+The bucket of *every sample* is drawn from the probabilities at the current
+step (:class:`CurriculumMixer`). Drawing per tar does not work for large tars:
+one draw would cover thousands of steps, and a shard-level shuffle buffer fills
+with draws made at progress 0.
 """
 
 from __future__ import annotations
 
-import logging
 import os
 import random
 import re
 from collections import defaultdict
-from typing import Dict, Iterable, List, Optional, Sequence, Union
+from typing import Dict, Iterable, Iterator, List, Sequence, Union
 
 import numpy as np
 import torch
+import webdataset as wds
+from webdataset.utils import pytorch_worker_info
+
+from .multiview import MultiViewConfig, Sequence as FrameSequence, build_sample, iter_sequences
 
 try:
     from webdataset.pytorch import IterableDataset
 except ModuleNotFoundError:  # pragma: no cover
     from torch.utils.data import IterableDataset
-
-log = logging.getLogger(__name__)
 
 _DSIM_DIR = re.compile(r"(dsim_[^/]+)")
 DEFAULT_DSIM_ORDER = (
@@ -121,28 +124,6 @@ def inject_query_noise_tensor(
     return (1.0 - alpha) * image + alpha * noise
 
 
-class TarfileToSamplesWithMeta:
-    """Like ``wds.tarfile_to_samples`` but copies shard-level fields onto samples."""
-
-    def __init__(self, handler=None, rename_files=None):
-        import webdataset as wds
-
-        if handler is None:
-            handler = wds.warn_and_continue
-        self._inner = wds.tarfile_to_samples(handler=handler, rename_files=rename_files)
-
-    def __call__(self, src):
-        for shard in src:
-            noise_alpha = 0.0
-            if isinstance(shard, dict):
-                noise_alpha = float(shard.get("noise_alpha", 0.0))
-                shard = {"url": shard["url"]}
-            for sample in self._inner(iter([shard])):
-                if isinstance(sample, dict):
-                    sample["__noise_alpha__"] = noise_alpha
-                yield sample
-
-
 def parse_float_list(text: Union[str, Sequence[float], None]) -> List[float]:
     if text is None:
         return []
@@ -176,30 +157,16 @@ def _read_progress(holder) -> float:
             return 0.0
 
 
-def _write_progress(holder, value: float):
-    if holder is None:
-        return
-    v = float(np.clip(value, 0.0, 1.0))
-    try:
-        holder.value = v
-    except Exception:  # noqa: BLE001
-        try:
-            holder["value"] = v
-        except Exception:  # noqa: BLE001
-            pass
+class BucketSchedule:
+    """Bucket names and their sampling probabilities as a function of progress.
 
-
-class CurriculumShardList(IterableDataset):
-    """Infinite shard URL source that samples tars by dsim-bucket curriculum.
-
-    Yields ``{"url": ..., "noise_alpha": ...}`` dicts like ``ResampledShards``,
-    so it plugs into the existing WDS pipeline ahead of ``split_by_node``.
+    Buckets: the real ``dsim_*`` buckets in curriculum order, then one
+    ``noise_<a>`` bucket per noise level.
     """
 
     def __init__(
         self,
         urls: Sequence[str],
-        progress=None,
         enable_curriculum: bool = True,
         curriculum_sigma: float = 0.16,
         curriculum_min_mass: float = 0.10,
@@ -208,36 +175,27 @@ class CurriculumShardList(IterableDataset):
         curriculum_start_probs: Union[str, Sequence[float], None] = None,
         curriculum_end_probs: Union[str, Sequence[float], None] = None,
         noise_levels: Union[str, Sequence[float], None] = None,
-        seed: int = 0,
     ):
         if not urls:
-            raise ValueError("CurriculumShardList requires at least one shard URL")
-        super().__init__()
-        dsim_bucket_shards = group_shards_by_bucket(urls)
-        dsim_names = list(dsim_bucket_shards.keys())
-        self.flat_urls = [u for bucket in dsim_bucket_shards.values() for u in bucket]
-        self.noise_levels = [float(a) for a in parse_float_list(noise_levels)]
-        for alpha in self.noise_levels:
+            raise ValueError("BucketSchedule requires at least one shard URL")
+        self.real_shards = group_shards_by_bucket(urls)
+        self.noise_alphas: Dict[str, float] = {}
+        for alpha in parse_float_list(noise_levels):
             if not 0.0 <= alpha <= 1.0:
                 raise ValueError(f"noise level must be in [0, 1], got {alpha}")
-        self.noise_alphas = {noise_bucket_name(alpha): alpha for alpha in self.noise_levels}
+            self.noise_alphas[noise_bucket_name(alpha)] = float(alpha)
+        self.bucket_names = list(self.real_shards) + list(self.noise_alphas)
 
-        self.bucket_shards = dict(dsim_bucket_shards)
-        for name in self.noise_alphas:
-            self.bucket_shards[name] = list(self.flat_urls)
-        self.bucket_names = dsim_names + list(self.noise_alphas.keys())
-
-        self.progress = progress if progress is not None else make_progress_holder(0.0)
+        n = len(self.bucket_names)
+        self.enable_curriculum = bool(enable_curriculum) and n > 1
         self.curriculum_sigma = float(curriculum_sigma)
         self.curriculum_min_mass = float(curriculum_min_mass)
         self.curriculum_start_center = float(curriculum_start_center)
         self.curriculum_end_center = float(curriculum_end_center)
-        self.seed = int(seed)
-        n = len(self.bucket_names)
-        self.enable_curriculum = bool(enable_curriculum) and n > 1
 
         start = parse_float_list(curriculum_start_probs)
         end = parse_float_list(curriculum_end_probs)
+        self._start_probs = self._end_probs = None
         if start or end:
             if len(start) != n or len(end) != n:
                 raise ValueError(
@@ -245,45 +203,17 @@ class CurriculumShardList(IterableDataset):
                     f"(dsim buckets + noise levels={self.bucket_names}), got "
                     f"{len(start)} and {len(end)}"
                 )
-            self._start_probs = np.asarray(start, dtype=np.float64)
-            self._start_probs = self._start_probs / self._start_probs.sum()
-            self._end_probs = np.asarray(end, dtype=np.float64)
-            self._end_probs = self._end_probs / self._end_probs.sum()
-        else:
-            self._start_probs = None
-            self._end_probs = None
+            self._start_probs = np.asarray(start, dtype=np.float64) / np.sum(start)
+            self._end_probs = np.asarray(end, dtype=np.float64) / np.sum(end)
 
-        for i, name in enumerate(self.bucket_names):
-            if name in self.noise_alphas:
-                log.info(
-                    f"  curriculum bucket [{i}] {name:20s}  synthetic  "
-                    f"alpha={self.noise_alphas[name]:g}  source={len(self.flat_urls)} tars"
-                )
-            else:
-                log.info(f"  curriculum bucket [{i}] {name:20s}  {len(self.bucket_shards[name])} shards")
-        if self.enable_curriculum:
-            p0 = self.bucket_probs(0.0)
-            p1 = self.bucket_probs(1.0)
-            log.info(
-                "  curriculum start: "
-                + ", ".join(f"{n}={p:.3f}" for n, p in zip(self.bucket_names, p0))
-            )
-            log.info(
-                "  curriculum end:   "
-                + ", ".join(f"{n}={p:.3f}" for n, p in zip(self.bucket_names, p1))
-            )
-        else:
-            log.info("  curriculum off (single bucket or disabled)")
-
-    def set_progress(self, progress: float):
-        _write_progress(self.progress, progress)
-
-    def bucket_probs(self, progress: Optional[float] = None) -> np.ndarray:
+    def probs(self, progress: float) -> np.ndarray:
         n = len(self.bucket_names)
-        if n == 0:
-            return np.zeros((0,), dtype=np.float64)
-        if progress is None:
-            progress = _read_progress(self.progress)
+        if not self.enable_curriculum:
+            if self.noise_alphas:
+                return np.full(n, 1.0 / n)
+            # No curriculum and no noise: like a plain shard list (∝ tar count).
+            counts = np.asarray([len(u) for u in self.real_shards.values()], dtype=np.float64)
+            return counts / counts.sum()
         if self._start_probs is not None:
             return interpolate_probs(self._start_probs, self._end_probs, progress)
         return gaussian_curriculum_probs(
@@ -295,25 +225,110 @@ class CurriculumShardList(IterableDataset):
             min_mass=self.curriculum_min_mass,
         )
 
-    def _yield_shard(self, rng: random.Random, bucket_name: str) -> Dict[str, Union[str, float]]:
-        noise_alpha = float(self.noise_alphas.get(bucket_name, 0.0))
-        return {
-            "url": rng.choice(self.bucket_shards[bucket_name]),
-            "noise_alpha": noise_alpha,
-        }
+    def describe(self) -> str:
+        p0, p1 = self.probs(0.0), self.probs(1.0)
+        mode = "per-sample curriculum" if self.enable_curriculum else "fixed bucket mix"
+        lines = [f"data: {sum(len(u) for u in self.real_shards.values())} tars, {mode}"]
+        for i, name in enumerate(self.bucket_names):
+            what = (f"synthetic, alpha={self.noise_alphas[name]:g}" if name in self.noise_alphas
+                    else f"{len(self.real_shards[name])} tars")
+            lines.append(f"  [{i}] {name:16s} {what:22s} start {p0[i]:.3f}  end {p1[i]:.3f}")
+        return "\n".join(lines)
 
-    def __iter__(self):
-        # Independent RNG per worker process (re-seeded on fork via pid).
-        rng = random.Random(self.seed + os.getpid())
+
+def _tar_samples(url: str) -> Iterator[Dict]:
+    return wds.tarfile_to_samples(handler=wds.warn_and_continue)(iter([{"url": url}]))
+
+
+class _BucketStream:
+    """Endless multi-view samples from one bucket's tars.
+
+    Reads tars front to back (in random order, cycled) and keeps
+    ``open_sequences`` whole sequences in memory. Each sample's target is a
+    random not-yet-used frame among them, so every frame of a sequence is a
+    target once, in random order, interleaved with other sequences.
+    """
+
+    def __init__(self, urls: List[str], rng: random.Random, cfg: MultiViewConfig, open_sequences: int):
+        self.urls = list(urls)
+        self.rng = rng
+        self.cfg = cfg
+        self.open_sequences = max(1, int(open_sequences))
+        self._queue: List[str] = []
+        self._sequences: Iterator[FrameSequence] = iter(())
+        self._open: List[tuple] = []  # (sequence, frame positions not yet emitted)
+
+    def _next_sequence(self) -> FrameSequence:
+        tars_opened = 0
         while True:
-            if not self.enable_curriculum:
-                if self.noise_levels:
-                    bucket_name = rng.choice(self.bucket_names)
-                    yield self._yield_shard(rng, bucket_name)
-                else:
-                    yield {"url": rng.choice(self.flat_urls), "noise_alpha": 0.0}
-                continue
-            probs = self.bucket_probs()
-            bi = int(np.random.choice(len(self.bucket_names), p=probs))
-            name = self.bucket_names[bi]
-            yield self._yield_shard(rng, name)
+            seq = next(self._sequences, None)
+            if seq is not None:
+                return seq
+            if tars_opened > len(self.urls):
+                raise RuntimeError(f"no usable samples in {len(self.urls)} tars, e.g. {self.urls[0]}")
+            if not self._queue:
+                self._queue = self.rng.sample(self.urls, len(self.urls))
+            self._sequences = iter_sequences(_tar_samples(self._queue.pop()), self.cfg)
+            tars_opened += 1
+
+    def next_sample(self) -> Dict:
+        while len(self._open) < self.open_sequences:
+            seq = self._next_sequence()
+            self._open.append((seq, list(range(len(seq.frames)))))
+        # A uniformly random remaining frame across the open sequences.
+        j = self.rng.choices(range(len(self._open)), weights=[len(r) for _, r in self._open])[0]
+        seq, remaining = self._open[j]
+        i = remaining.pop(self.rng.randrange(len(remaining)))
+        if not remaining:
+            self._open.pop(j)
+        return build_sample(seq, i, self.rng, self.cfg)
+
+
+class CurriculumMixer(IterableDataset):
+    """Endless training samples whose bucket is drawn per sample from the live schedule.
+
+    Each DataLoader worker keeps one :class:`_BucketStream` per real bucket,
+    over its share of that bucket's tars (tars are split across all GPUs ×
+    workers when there are enough of them). For each sample a bucket is drawn
+    from ``schedule.probs(progress)``; a synthetic ``noise_<a>`` bucket takes the
+    sample from a real stream picked in proportion to tar counts and sets
+    ``__noise_alpha__ = a``. ``progress`` is the shared value train.py updates
+    every step, so the mix follows the schedule up to the DataLoader prefetch.
+    """
+
+    def __init__(
+        self,
+        schedule: BucketSchedule,
+        cfg: MultiViewConfig,
+        progress=None,
+        open_sequences: int = 4,
+        seed: int = 0,
+    ):
+        super().__init__()
+        self.schedule = schedule
+        self.cfg = cfg
+        self.progress = progress
+        self.open_sequences = open_sequences
+        self.seed = seed
+
+    def __iter__(self) -> Iterator[Dict]:
+        rank, world_size, worker, num_workers = pytorch_worker_info()
+        stream_id, num_streams = rank * num_workers + worker, world_size * num_workers
+        # pid: a restarted (resumed) run does not replay the same stream.
+        rng = random.Random(f"{self.seed}|{stream_id}|{os.getpid()}")
+        streams = {
+            name: _BucketStream(urls[stream_id::num_streams] if len(urls) >= num_streams else urls,
+                                rng, self.cfg, self.open_sequences)
+            for name, urls in self.schedule.real_shards.items()
+        }
+        real_names = list(streams)
+        tar_counts = [len(urls) for urls in self.schedule.real_shards.values()]
+        names = self.schedule.bucket_names
+        while True:
+            name = rng.choices(names, weights=self.schedule.probs(_read_progress(self.progress)))[0]
+            alpha = self.schedule.noise_alphas.get(name, 0.0)
+            if name in self.schedule.noise_alphas:
+                name = rng.choices(real_names, weights=tar_counts)[0]
+            sample = streams[name].next_sample()
+            sample["__noise_alpha__"] = alpha
+            yield sample

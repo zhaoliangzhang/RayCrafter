@@ -22,13 +22,10 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from torchvision.transforms import InterpolationMode
 
-from .curriculum import (
-    CurriculumShardList,
-    TarfileToSamplesWithMeta,
-    inject_query_noise_tensor,
-    parse_float_list,
-)
-from .multiview import MultiViewConfig, MultiViewStage
+from webdataset.utils import pytorch_worker_info
+
+from .curriculum import BucketSchedule, CurriculumMixer, inject_query_noise_tensor
+from .multiview import MultiViewConfig, OrderedMultiView
 
 
 def expand_shards(shards: Union[str, List[str]]) -> List[str]:
@@ -78,7 +75,6 @@ def make_dataloader(
     use_pose: bool = False,
     shuffle: bool = True,
     window: int = 15,
-    shuffle_buffer: int = 20,
     enable_curriculum: bool = False,
     curriculum_sigma: float = 0.16,
     curriculum_min_mass: float = 0.10,
@@ -90,48 +86,49 @@ def make_dataloader(
     noise_mode: str = "lerp",
     noise_space: str = "latent",
     curriculum_progress=None,
+    open_sequences: int = 4,
     repeat: bool = True,
 ) -> DataLoader:
-    """Training uses the curriculum shard sampler (infinite) whenever curriculum or
-    noise levels are on; otherwise a plain shard list (repeated if ``repeat``)."""
+    """``shuffle=True`` (training): an endless mix whose bucket and noise level are
+    drawn per sample from the curriculum at ``curriculum_progress`` (see
+    :class:`CurriculumMixer`); targets are random frames of whole buffered sequences.
+    ``shuffle=False`` (validation / sampling): every frame of every sequence once, in
+    tar order, with deterministic refs; repeated if ``repeat``."""
     h, w = int(image_size[0]), int(image_size[1])
     urls = expand_shards(shards)
     if not urls:
         raise ValueError("make_dataloader: empty shard list")
-    levels = parse_float_list(noise_levels)
-    use_curriculum = bool(enable_curriculum) or bool(levels)
+    mv_cfg = MultiViewConfig(num_views=num_views, num_refs=ref_size, window=window)
 
-    if use_curriculum:
-        pipeline: List[Any] = [CurriculumShardList(
+    if shuffle:
+        schedule = BucketSchedule(
             urls,
-            progress=curriculum_progress,
-            enable_curriculum=bool(enable_curriculum),
+            enable_curriculum=enable_curriculum,
             curriculum_sigma=curriculum_sigma,
             curriculum_min_mass=curriculum_min_mass,
             curriculum_start_center=curriculum_start_center,
             curriculum_end_center=curriculum_end_center,
             curriculum_start_probs=curriculum_start_probs,
             curriculum_end_probs=curriculum_end_probs,
-            noise_levels=levels or None,
-            seed=0,
-        )]
-        tar_stage = TarfileToSamplesWithMeta()
+            noise_levels=noise_levels,
+        )
+        if pytorch_worker_info()[0] == 0:
+            print(schedule.describe(), flush=True)
+        pipeline: List[Any] = [
+            CurriculumMixer(schedule, mv_cfg, progress=curriculum_progress, open_sequences=open_sequences)
+        ]
     else:
-        pipeline = [wds.SimpleShardList(urls)]
-        tar_stage = wds.tarfile_to_samples(handler=wds.warn_and_continue)
-
-    if shuffle:
-        pipeline.append(wds.shuffle(shuffle_buffer, handler=wds.warn_and_continue))
-    pipeline.append(wds.split_by_node)
-    if shuffle:
-        pipeline.append(wds.shuffle(shuffle_buffer, handler=wds.warn_and_continue))
-    pipeline.extend([wds.split_by_worker, tar_stage])
-    stage = MultiViewStage(MultiViewConfig(num_views=num_views, num_refs=ref_size, window=window))
-    pipeline.append(wds.map(stage, handler=wds.warn_and_continue))
+        pipeline = [
+            wds.SimpleShardList(urls),
+            wds.split_by_node,
+            wds.split_by_worker,
+            wds.tarfile_to_samples(handler=wds.warn_and_continue),
+            OrderedMultiView(mv_cfg),
+        ]
 
     def process(sample: Dict) -> Optional[Dict]:
         try:
-            alpha = float(sample.get("__noise_alpha__", sample.get("noise_alpha", 0.0)))
+            alpha = float(sample.get("__noise_alpha__", 0.0))
             src, tgt = [], []
             for i in range(1, num_views + 1):
                 s = _load_image(sample[f"img{i}.png"], (h, w))
@@ -164,7 +161,7 @@ def make_dataloader(
     pipeline.append(wds.map(process, handler=wds.warn_and_continue))
     pipeline.append(wds.select(lambda x: x is not None))
     ds = wds.DataPipeline(*pipeline)
-    if repeat and not use_curriculum:
+    if repeat and not shuffle:
         ds = ds.repeat()
 
     return DataLoader(ds, batch_size=batch_size, num_workers=num_workers, pin_memory=True, collate_fn=_collate)

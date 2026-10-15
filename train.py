@@ -48,6 +48,10 @@ def _lr(cfg: Config, step: int) -> float:
     return cfg.learning_rate * 0.5 * (1.0 + math.cos(math.pi * progress))
 
 
+def _progress(cfg: Config, step: int) -> float:
+    return min(1.0, step / max(cfg.curriculum_steps or cfg.max_steps, 1))
+
+
 def _cameras(batch: dict, device):
     if "camera_c2w" not in batch:
         return {}
@@ -99,7 +103,8 @@ def train(config: str) -> None:
     optimizer = AdamW(train_params, lr=cfg.learning_rate, weight_decay=cfg.weight_decay,
                       betas=(0.9, 0.999), eps=1e-8)
 
-    progress = make_progress_holder(0.0) if (cfg.enable_curriculum or cfg.noise_levels) else None
+    progress = (make_progress_holder(_progress(cfg, cfg.start_step))
+                if (cfg.enable_curriculum or cfg.noise_levels) else None)
     common = dict(num_views=cfg.num_views, ref_size=cfg.ref_size, image_size=tuple(cfg.image_size),
                   batch_size=cfg.batch_size, use_pose=cfg.use_pose, window=cfg.window)
     train_loader = make_dataloader(
@@ -111,7 +116,7 @@ def train(config: str) -> None:
         curriculum_start_probs=cfg.curriculum_start_probs,
         curriculum_end_probs=cfg.curriculum_end_probs,
         noise_levels=cfg.noise_levels, noise_mode=cfg.noise_mode, noise_space=cfg.noise_space,
-        curriculum_progress=progress, **common,
+        curriculum_progress=progress, open_sequences=cfg.open_sequences, **common,
     )
     val_loader = None
     if cfg.val_shards:
@@ -126,7 +131,7 @@ def train(config: str) -> None:
     while step < cfg.max_steps:
         step += 1
         if progress is not None:
-            progress.value = min(1.0, step / max(cfg.curriculum_steps or cfg.max_steps, 1))
+            progress.value = _progress(cfg, step)
         lr = _lr(cfg, step)
         for pg in optimizer.param_groups:
             pg["lr"] = lr

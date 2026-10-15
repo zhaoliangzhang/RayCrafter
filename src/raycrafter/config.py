@@ -73,6 +73,7 @@ class Config:
     image_size: List[int] = field(default_factory=lambda: [432, 768])
     num_workers: int = 1
     window: int = 15
+    open_sequences: int = 4
 
     # ── Logging / checkpointing ────────────────────────────────────────────
     output_dir: str = "outputs/run"

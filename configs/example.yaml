@@ -142,11 +142,12 @@ pixel_loss_t_weighting: none
 # Each tar is assigned to a bucket. Real buckets come from the `dsim_*`
 # directory name in its path (DreamSim distance of render vs GT, easy→hard;
 # shards outside a dsim_* dir are bucketed by their parent dir). Each entry of
-# noise_levels adds a synthetic bucket noise_<a>: a random tar whose inputs are
-# replaced by noise of strength a (a=1 → pure noise → pure NVS).
+# noise_levels adds a synthetic bucket noise_<a>: a sample from a random real
+# bucket (weighted by tar count) whose input is replaced by noise of strength a
+# (a=1 → pure noise → pure NVS).
 # Bucket order: real buckets (dsim_lt_0.25, dsim_0.25_0.3, dsim_0.3_0.35,
 # dsim_0.35_0.4, dsim_ge_0.4, then any others sorted), then noise_levels.
-# A bucket is drawn per tar (~100 samples), not per sample.
+# A bucket is drawn for every sample, from the probabilities at the current step.
 enable_curriculum: true
 # Bucket probabilities move linearly from start to end over this many steps,
 # then stay at the end. null → over max_steps.
@@ -194,6 +195,10 @@ image_size: [432, 768]
 num_workers: 1                # DataLoader workers per GPU
 # Neighbor views for num_views > 1 are drawn within ±window frames.
 window: 15
+# Whole sequences kept in memory per bucket, per DataLoader worker. Each training
+# sample's target is a random unused frame among them, with refs from its whole
+# sequence. Memory ≈ 5 buckets × open_sequences × 0.1–0.4 GB per worker.
+open_sequences: 4
 
 
 # ── Logging / checkpoints ────────────────────────────────────────────────────
