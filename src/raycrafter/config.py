@@ -53,6 +53,7 @@ class Config:
     pixel_loss_latent_crop: Optional[int] = None
     pixel_loss_t_weighting: str = "none"   # "none" | "one_minus_t"
     gradient_checkpointing: bool = True
+    shard_optimizer: bool = False
 
     # ── Curriculum / synthetic query noise ─────────────────────────────────
     enable_curriculum: bool = False
@@ -73,6 +74,7 @@ class Config:
     image_size: List[int] = field(default_factory=lambda: [432, 768])
     num_workers: int = 1
     window: int = 15
+    open_sequences: int = 4
 
     # ── Logging / checkpointing ────────────────────────────────────────────
     output_dir: str = "outputs/run"

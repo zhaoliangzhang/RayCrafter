@@ -76,8 +76,9 @@ WebDataset tars. Each sample is one frame:
 `__`. All fields except the last form the sequence id, and the last field ends
 in `_<int>` (the frame index). Samples from one sequence must be contiguous in
 the tar. When a sample is built, the target views come from frames of the same
-sequence (within `±window`), and the R refs are distinct `ref.png`s seen in
-that sequence.
+sequence (within `±window`), and the R refs are distinct `ref.png`s of that
+whole sequence (the loader reads a sequence completely before building its
+samples).
 
 `pose.json`, either layout:
 
@@ -92,7 +93,8 @@ that sequence.
 
 `c2w` is camera-to-world in the OpenCV convention (x right, y down, z forward).
 Any world frame works, because poses are re-expressed relative to camera 0.
-The curriculum groups tars by a `dsim_*` directory in their path (see
+The curriculum groups tars by a `dsim_*` directory in their path and draws a
+bucket for every sample from the probabilities at the current step (see
 `configs/example.yaml`).
 
 ## Code layout
@@ -135,3 +137,10 @@ directly (`resume_from`). The config keys `camera_conditioning`,
 `resume_lora` is now `resume_from`. Two fixes over the old code: LoRA
 checkpoints now include the camera-module weights, and LPIPS stays in eval mode
 during training (it was running with Dropout(0.5)).
+
+The data loader differs on purpose. The old one drew the curriculum bucket and
+noise level once per tar, and built each target's refs only from frames streamed
+before it. With 5000-sample tars, the realized mix stayed near the curriculum's
+start probabilities for the whole run, and most samples got repeated refs. Now
+the bucket and noise level are drawn per sample, targets are random frames of
+whole buffered sequences, and refs come from the whole sequence.

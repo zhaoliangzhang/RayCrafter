@@ -23,8 +23,9 @@
 # ── Backbone ─────────────────────────────────────────────────────────────────
 # Which backbone adapter (src/raycrafter/backbones/<name>.py). Only "flux2" exists.
 backbone: flux2
-# flux.2-klein-4b | flux.2-klein-9b | flux.2-dev. RayRoPE needs 128-d heads
-# (true for all FLUX.2 variants).
+# flux.2-klein-4b | flux.2-klein-9b | flux.2-klein-base-4b | flux.2-klein-base-9b
+# | flux.2-dev (base = undistilled). RayRoPE needs 128-d heads (true for all
+# FLUX.2 variants).
 model_variant: flux.2-klein-4b
 # Local .safetensors for the transformer / VAE. null → download from Hugging
 # Face (black-forest-labs/FLUX.2-klein-4B, and ae.safetensors from FLUX.2-dev;
@@ -109,6 +110,11 @@ mixed_precision: bf16
 # Recompute each transformer block in backward (~30% slower, much less memory).
 # Needed for 7 images at 432x768 on a 140 GB H200.
 gradient_checkpointing: true
+# Multi-GPU only: shard the AdamW state across ranks (ZeRO-1). Full fine-tune
+# keeps fp32 weights + grads + 2 Adam moments = 16 B/param per GPU under plain
+# DDP: 63 GB for 4B, 148 GB for 9B (too much for a 140 GB H200). Sharded over
+# N GPUs: (8 + 8/N) B/param, e.g. 92 GB for 9B on 4 GPUs. Same AdamW math.
+shard_optimizer: false
 
 
 # ── Bridge / flow-matching timesteps ─────────────────────────────────────────
@@ -142,11 +148,12 @@ pixel_loss_t_weighting: none
 # Each tar is assigned to a bucket. Real buckets come from the `dsim_*`
 # directory name in its path (DreamSim distance of render vs GT, easy→hard;
 # shards outside a dsim_* dir are bucketed by their parent dir). Each entry of
-# noise_levels adds a synthetic bucket noise_<a>: a random tar whose inputs are
-# replaced by noise of strength a (a=1 → pure noise → pure NVS).
+# noise_levels adds a synthetic bucket noise_<a>: a sample from a random real
+# bucket (weighted by tar count) whose input is replaced by noise of strength a
+# (a=1 → pure noise → pure NVS).
 # Bucket order: real buckets (dsim_lt_0.25, dsim_0.25_0.3, dsim_0.3_0.35,
 # dsim_0.35_0.4, dsim_ge_0.4, then any others sorted), then noise_levels.
-# A bucket is drawn per tar (~100 samples), not per sample.
+# A bucket is drawn for every sample, from the probabilities at the current step.
 enable_curriculum: true
 # Bucket probabilities move linearly from start to end over this many steps,
 # then stay at the end. null → over max_steps.
@@ -184,7 +191,8 @@ train_shards:   # TODO: your paths
   - "pipe:cat /path/to/wds/dsim_0.3_0.35/train/pairs-{000000..000026}.tar"
   - "pipe:cat /path/to/wds/dsim_0.35_0.4/train/pairs-{000000..000024}.tar"
   - "pipe:cat /path/to/wds/dsim_ge_0.4/train/pairs-{000000..000064}.tar"
-# Validation: up to 20 batches every val_interval (loss only), no curriculum.
+# Validation: up to 20 batches every val_interval, no curriculum. Logs val/loss
+# (refining the degraded renders) and val/loss_nvs (same batches, pure noise in).
 # "" disables validation.
 val_shards:     # TODO: your paths
   - "pipe:cat /path/to/wds/dsim_lt_0.25/eval/pairs-000000.tar"
@@ -192,8 +200,13 @@ val_shards:     # TODO: your paths
 # 16 (432x768 → 27x48 = 1296 tokens per image).
 image_size: [432, 768]
 num_workers: 1                # DataLoader workers per GPU
-# Neighbor views for num_views > 1 are drawn within ±window frames.
+# Neighbor views for num_views > 1 are drawn within ±window frame indices; a
+# frame with none in range takes the nearest other frames of its sequence.
 window: 15
+# Whole sequences kept in memory per bucket, per DataLoader worker. Each training
+# sample's target is a random unused frame among them, with refs from its whole
+# sequence. Memory ≈ 5 buckets × open_sequences × 0.1–0.4 GB per worker.
+open_sequences: 4
 
 
 # ── Logging / checkpoints ────────────────────────────────────────────────────

@@ -52,6 +52,17 @@ VARIANTS = {
         "repo_id": "black-forest-labs/FLUX.2-klein-9B",
         "filename": "flux-2-klein-9b.safetensors",
     },
+    # Undistilled base models: same architecture as the distilled klein models.
+    "flux.2-klein-base-4b": {
+        "params": Klein4BParams(),
+        "repo_id": "black-forest-labs/FLUX.2-klein-base-4B",
+        "filename": "flux-2-klein-base-4b.safetensors",
+    },
+    "flux.2-klein-base-9b": {
+        "params": Klein9BParams(),
+        "repo_id": "black-forest-labs/FLUX.2-klein-base-9B",
+        "filename": "flux-2-klein-base-9b.safetensors",
+    },
     "flux.2-dev": {
         "params": Flux2Params(),
         "repo_id": "black-forest-labs/FLUX.2-dev",
