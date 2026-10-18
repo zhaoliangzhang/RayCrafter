@@ -2,8 +2,10 @@
 
 Everything that knows about FLUX.2 internals lives in this file. To add a new
 backbone, provide the same functions (``load_backbone``, ``load_vae``,
-``pack_views``, ``install_camera_attention``, ``set_camera_context``,
-``enable_gradient_checkpointing``) for it and dispatch on ``cfg.backbone``.
+``pack_views``, ``unpack_views``, ``ref_index``, ``run_transformer``,
+``camera_inputs``, ``install_camera_attention``, ``set_camera_context``,
+``enable_gradient_checkpointing``, ``PATCH``) for it and register it in
+``model.BACKBONES``.
 
 FLUX.2 code comes from https://github.com/black-forest-labs/flux2 (see README).
 """
@@ -96,10 +98,6 @@ def load_vae(path: Optional[str], device: torch.device) -> AutoEncoder:
     return ae.to(device)
 
 
-def context_dim(variant: str) -> int:
-    return VARIANTS[variant]["params"].context_in_dim
-
-
 # ── Token packing ────────────────────────────────────────────────────────────
 
 
@@ -131,6 +129,27 @@ def empty_text(batch_size: int, ctx_dim: int, device: torch.device, dtype: torch
     txt = torch.zeros(batch_size, 0, ctx_dim, device=device, dtype=dtype)
     txt_ids = torch.zeros(batch_size, 0, 4, device=device, dtype=torch.long)
     return txt, txt_ids
+
+
+def ref_index(num_views: int, ref_t_scale: Optional[int]) -> Tuple[int, int]:
+    """(start, step) of the ref RoPE t coordinates; views use t = 0..V-1."""
+    return (int(num_views), 1) if ref_t_scale is None else (int(ref_t_scale), int(ref_t_scale))
+
+
+def run_transformer(transformer: nn.Module, x_ref, ref_ids, x_views, view_ids, t) -> torch.Tensor:
+    """One forward of the (possibly DDP-wrapped) transformer over ``[refs | views]``
+    without text; returns the view velocity."""
+    txt, txt_ids = empty_text(x_views.shape[0], _unwrap(transformer).txt_in.in_features,
+                              x_views.device, x_views.dtype)
+    pred = transformer(
+        x=torch.cat([x_ref, x_views], dim=1),
+        x_ids=torch.cat([ref_ids, view_ids], dim=1),
+        timesteps=t,
+        ctx=txt,
+        ctx_ids=txt_ids,
+        guidance=None,
+    )
+    return pred[:, x_ref.shape[1]:]
 
 
 # ── Camera conditioning inside FLUX blocks ──────────────────────────────────

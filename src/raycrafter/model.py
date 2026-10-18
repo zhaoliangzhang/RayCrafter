@@ -16,16 +16,18 @@ optional LPIPS / L1 on the decoded one-step estimate ``x0 = z_t - t·v``.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from safetensors.torch import load_file as load_sft
 
-from .backbones import flux2 as backbone
+from .backbones import flux2, flux3
 from .config import Config
 from .lora import add_lora, freeze_base_model, load_trainable_weights
+
+BACKBONES = {"flux2": flux2, "flux3": flux3}
 
 
 class RayCrafterModel(nn.Module):
@@ -34,12 +36,12 @@ class RayCrafterModel(nn.Module):
         self.cfg = cfg
         self.device = device
         self._dtype = torch.bfloat16 if cfg.mixed_precision == "bf16" else torch.float32
+        self.backbone = backbone = BACKBONES[cfg.backbone]
 
         self.ae = backbone.load_vae(cfg.ae_path, device)
         self.ae.requires_grad_(False)
 
         self.transformer = backbone.load_backbone(cfg.model_variant, cfg.model_path, device)
-        self.ctx_dim = backbone.context_dim(cfg.model_variant)
 
         if cfg.use_lora:
             n = len(add_lora(self.transformer, cfg.lora_target_modules,
@@ -85,7 +87,8 @@ class RayCrafterModel(nn.Module):
     def encode(self, images: torch.Tensor) -> torch.Tensor:
         """``(N, 3, H, W)`` in [-1, 1] → ``(N, 128, H/16, W/16)``; center-crops to a multiple of 16."""
         H, W = images.shape[-2:]
-        H16, W16 = (H // backbone.PATCH) * backbone.PATCH, (W // backbone.PATCH) * backbone.PATCH
+        P = self.backbone.PATCH
+        H16, W16 = (H // P) * P, (W // P) * P
         if (H16, W16) != (H, W):
             top, left = (H - H16) // 2, (W - W16) // 2
             images = images[..., top:top + H16, left:left + W16]
@@ -101,11 +104,6 @@ class RayCrafterModel(nn.Module):
         return z.reshape(B, V, *z.shape[1:])
 
     # ── Helpers ───────────────────────────────────────────────────────────────
-
-    def _ref_t(self, num_views: int) -> Tuple[int, int]:
-        """(t_start, t_step) of the ref RoPE t coordinates; views use t = 0..V-1."""
-        s = self.cfg.ref_t_scale
-        return (int(num_views), 1) if s is None else (int(s), int(s))
 
     def _sort_refs(self, ref_imgs, c2w, fxfycxcy):
         """Reorder refs near→far by camera-center distance to the views (mean over views)."""
@@ -158,31 +156,23 @@ class RayCrafterModel(nn.Module):
         z_src = self._source_latent(z_src, z_tgt, noise_alpha)
         h, w = z_src.shape[-2:]
 
-        t0, dt = self._ref_t(V)
-        x_ref, ref_ids = backbone.pack_views(z_ref, t0, dt)
+        start, step = self.backbone.ref_index(V, self.cfg.ref_t_scale)
+        x_ref, ref_ids = self.backbone.pack_views(z_ref, start, step)
         cams = None
         if self.cfg.needs_cameras:
-            cams = backbone.camera_inputs(
+            cams = self.backbone.camera_inputs(
                 c2w, fxfycxcy, (H, W), (h, w), self.cfg.uses_scope, self.cfg.uses_rayrope
             )
         return z_src, z_tgt, x_ref.to(self._dtype), ref_ids.to(src_imgs.device), cams, (h, w)
 
     def _forward(self, x_ref, ref_ids, x_views, view_ids, t, cams) -> torch.Tensor:
         """One transformer pass; returns the predicted velocity of the view tokens."""
-        B = x_views.shape[0]
-        txt, txt_ids = backbone.empty_text(B, self.ctx_dim, x_views.device, self._dtype)
-        backbone.set_camera_context(self.transformer, cams)
+        self.backbone.set_camera_context(self.transformer, cams)
         # Autocast lets training keep fp32 master weights while matmuls run in bf16.
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=self._dtype == torch.bfloat16):
-            pred = self.transformer(
-                x=torch.cat([x_ref, x_views], dim=1),
-                x_ids=torch.cat([ref_ids, view_ids], dim=1),
-                timesteps=t.to(self._dtype),
-                ctx=txt,
-                ctx_ids=txt_ids,
-                guidance=None,
+            return self.backbone.run_transformer(
+                self.transformer, x_ref, ref_ids, x_views, view_ids, t.to(self._dtype)
             )
-        return pred[:, x_ref.shape[1]:]
 
     # ── Training ──────────────────────────────────────────────────────────────
 
@@ -210,8 +200,8 @@ class RayCrafterModel(nn.Module):
         z_t = t_bc * z_src + (1.0 - t_bc) * z_tgt
         v_target = z_src - z_tgt
 
-        x_views, view_ids = backbone.pack_views(z_t)
-        v_tok, _ = backbone.pack_views(v_target)
+        x_views, view_ids = self.backbone.pack_views(z_t)
+        v_tok, _ = self.backbone.pack_views(v_target)
         pred = self._forward(x_ref, ref_ids, x_views.to(self._dtype), view_ids.to(device), t, cams)
 
         latent_loss = F.mse_loss(pred.float(), v_tok.float())
@@ -219,12 +209,15 @@ class RayCrafterModel(nn.Module):
         out = {"latent_loss": latent_loss.detach().item(), "v_mag": v_tok.float().abs().mean().item()}
 
         if cfg.lpips_loss_weight > 0 or cfg.l1_pixel_loss_weight > 0:
-            z0_hat = z_t - t_bc * backbone.unpack_views(pred, V, h, w).to(z_t.dtype)
+            z0_hat = z_t - t_bc * self.backbone.unpack_views(pred, V, h, w).to(z_t.dtype)
             lpips_l, l1_l = self._pixel_losses(z0_hat, tgt_imgs)
+            wt = torch.ones_like(t)
             if cfg.pixel_loss_t_weighting == "one_minus_t":
-                wt = (1.0 - t).repeat_interleave(V).to(lpips_l.dtype)
-            else:
-                wt = torch.ones_like(lpips_l)
+                wt = 1.0 - t
+            elif cfg.pixel_loss_t_weighting == "one_minus_t_noise" and noise_alpha is not None:
+                # Noise samples (alpha > 0) only; clean-up samples keep full weight.
+                wt = torch.where(noise_alpha.to(device) > 0, 1.0 - t, wt)
+            wt = wt.repeat_interleave(V).to(lpips_l.dtype)
             loss = (
                 loss
                 + cfg.lpips_loss_weight * (wt * lpips_l).mean()
@@ -240,7 +233,7 @@ class RayCrafterModel(nn.Module):
         """Per-image LPIPS and L1 between decoded ``z0_hat`` (B, V, C, h, w) and targets."""
         z = z0_hat.flatten(0, 1)
         tgt = tgt_imgs.flatten(0, 1)
-        P = backbone.PATCH
+        P = self.backbone.PATCH
         h, w = z.shape[-2:]
         H, W = tgt.shape[-2:]
         top, left = (H - h * P) // 2, (W - w * P) // 2
@@ -285,7 +278,7 @@ class RayCrafterModel(nn.Module):
         z_src, _, x_ref, ref_ids, cams, (h, w) = self._prepare(
             src_imgs, ref_imgs, camera_c2w, camera_fxfycxcy, noise_alpha, tgt_imgs
         )
-        x, view_ids = backbone.pack_views(z_src)
+        x, view_ids = self.backbone.pack_views(z_src)
         x, view_ids = x.to(self._dtype), view_ids.to(device)
 
         num_steps = max(1, int(num_steps))
@@ -294,6 +287,6 @@ class RayCrafterModel(nn.Module):
             t_vec = torch.full((B,), t_curr, device=device, dtype=self._dtype)
             x = x + (t_next - t_curr) * self._forward(x_ref, ref_ids, x, view_ids, t_vec, cams)
 
-        z_out = backbone.unpack_views(x, V, h, w).flatten(0, 1)
+        z_out = self.backbone.unpack_views(x, V, h, w).flatten(0, 1)
         imgs = self.decode(z_out)
         return imgs.reshape(B, V, *imgs.shape[1:])
