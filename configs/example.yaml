@@ -21,15 +21,20 @@
 
 
 # ── Backbone ─────────────────────────────────────────────────────────────────
-# Which backbone adapter (src/raycrafter/backbones/<name>.py). Only "flux2" exists.
+# Which backbone adapter (src/raycrafter/backbones/<name>.py): flux2 | flux3.
 backbone: flux2
-# flux.2-klein-4b | flux.2-klein-9b | flux.2-klein-base-4b | flux.2-klein-base-9b
-# | flux.2-dev (base = undistilled). RayRoPE needs 128-d heads (true for all
-# FLUX.2 variants).
+# flux2: flux.2-klein-4b | flux.2-klein-9b | flux.2-klein-base-4b |
+#        flux.2-klein-base-9b | flux.2-dev (base = undistilled). RayRoPE needs
+#        128-d heads (true for all FLUX.2 variants).
+# flux3: flux.3-image-klein-base (5.5B, undistilled). Refs go in FLUX 3's
+#        reference stream (timestep 0, RoPE l = -1, -2, ...; ref_t_scale is
+#        unused), views in the image stream (l = 0..V-1). rope_type must be
+#        flux. It uses the FLUX.2 VAE unchanged (same ae.safetensors).
 model_variant: flux.2-klein-4b
 # Local .safetensors for the transformer / VAE. null → download from Hugging
-# Face (black-forest-labs/FLUX.2-klein-4B, and ae.safetensors from FLUX.2-dev;
-# both are gated: accept the license on HF and `huggingface-cli login`).
+# Face (black-forest-labs/FLUX.2-klein-4B or flux-3-image-klein-base
+# model.safetensors, and ae.safetensors from FLUX.2-dev; all gated: accept the
+# license on HF and `huggingface-cli login`).
 model_path: null
 ae_path: null
 
@@ -141,6 +146,10 @@ pixel_loss_latent_crop: null
 # one_minus_t: scale by (1 - t). Near t=1 the one-step x0 is a conditional
 #              mean (blurry), so LPIPS there fights generation. Note it zeroes
 #              the pixel loss on the t_one_prob samples.
+# one_minus_t_noise: (1 - t) on noise samples (noise_alpha > 0) only, so
+#              t=1 NVS trains on MSE alone (plain flow matching). Clean-up
+#              samples keep full pixel losses at every t: the render pins
+#              down the details.
 pixel_loss_t_weighting: none
 
 

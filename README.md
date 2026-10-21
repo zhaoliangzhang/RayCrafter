@@ -28,15 +28,17 @@ pinhole cameras.
 git clone --recurse-submodules <this repo> RayCrafter && cd RayCrafter
 # (already cloned without it: git submodule update --init)
 
-# FLUX.2 model code is the submodule third_party/flux2, pinned to a commit.
-# Its own deps are pinned too tightly, hence --no-deps.
+# FLUX.2 / FLUX 3 model code are the submodules third_party/flux2 and
+# third_party/flux3, pinned to commits. Their own deps are pinned too
+# tightly, hence --no-deps.
 pip install --no-deps -e third_party/flux2
+pip install --no-deps -e third_party/flux3   # only for backbone: flux3
 
 pip install -e .            # torch>=2.4 with CUDA should already be installed
 huggingface-cli login       # FLUX.2-klein-4B and FLUX.2-dev (VAE) are gated on HF
 ```
 
-If flux2 is not pip-installed, `third_party/flux2/src` is also found
+If flux2 / flux3 are not pip-installed, `third_party/<name>/src` is also found
 automatically. Weights download on first use. To use local files, set
 `model_path` / `ae_path` in the config.
 
@@ -107,6 +109,7 @@ src/raycrafter/
   model.py                     bridge matching: training_step / sample (backbone-generic)
   lora.py                      LoRA + checkpoint save/load
   backbones/flux2.py           everything FLUX.2-specific: loading, VAE, token packing, block patches
+  backbones/flux3.py           FLUX 3 Image Klein: loading, token packing, batched camera-aware forward
   cameras/scope.py             SCoPE: Plücker rays + Q/K/V injection (backbone-free)
   cameras/rayrope.py           RayRoPE: projective geometry + attention (backbone-free)
   data/                        WebDataset loader, multi-view grouping, curriculum
@@ -114,9 +117,9 @@ src/raycrafter/
 
 **New backbone:** add `backbones/<name>.py` with the same functions as
 `flux2.py` (`load_backbone`, `load_vae`, `pack_views`, `unpack_views`,
-`install_camera_attention`, `camera_inputs`, `set_camera_context`, ...).
-Then dispatch on `cfg.backbone` in `model.py` (it currently imports `flux2`
-directly). Two places in `cameras/` assume FLUX.2: RayRoPE's 32 + 96
+`ref_index`, `run_transformer`, `install_camera_attention`, `camera_inputs`,
+`set_camera_context`, ...). Then add it to `BACKBONES` in `model.py` and to
+the `backbone` choices in `config.py`. Two places in `cameras/` assume FLUX.2: RayRoPE's 32 + 96
 head-channel split (`ROPE_DIM`, `RAY_DIM`), and the 16-px token patch.
 
 **New camera type:** cameras enter in exactly two functions.
