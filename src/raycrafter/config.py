@@ -11,7 +11,7 @@ import yaml
 @dataclass
 class Config:
     # ── Backbone ───────────────────────────────────────────────────────────
-    backbone: str = "flux2"
+    backbone: str = "flux2"           # "flux2" | "flux3"
     model_variant: str = "flux.2-klein-4b"
     model_path: Optional[str] = None
     ae_path: Optional[str] = None
@@ -51,7 +51,7 @@ class Config:
     lpips_loss_weight: float = 10.0
     l1_pixel_loss_weight: float = 1.0
     pixel_loss_latent_crop: Optional[int] = None
-    pixel_loss_t_weighting: str = "none"   # "none" | "one_minus_t"
+    pixel_loss_t_weighting: str = "none"   # "none" | "one_minus_t" | "one_minus_t_noise"
     gradient_checkpointing: bool = True
     shard_optimizer: bool = False
 
@@ -113,12 +113,12 @@ class Config:
 
     def validate(self) -> None:
         choices = {
-            "backbone": ("flux2",),
+            "backbone": ("flux2", "flux3"),
             "camera_condition": ("none", "scope"),
             "rope_type": ("flux", "rayrope"),
             "lr_schedule": ("cosine", "constant"),
             "mixed_precision": ("bf16", "fp32"),
-            "pixel_loss_t_weighting": ("none", "one_minus_t"),
+            "pixel_loss_t_weighting": ("none", "one_minus_t", "one_minus_t_noise"),
             "noise_mode": ("lerp", "additive"),
             "noise_space": ("latent", "pixel"),
         }
