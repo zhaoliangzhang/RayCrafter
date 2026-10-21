@@ -182,9 +182,26 @@ noise_space: latent
 noise_mode: lerp
 
 
-# ── Data (WebDataset; format in README) ──────────────────────────────────────
+# ── Data ─────────────────────────────────────────────────────────────────────
+# webdataset: the tar list below (format in the README).
+# dl3dv_points: one split directory, e.g.
+#   /home/jhu/zzhan288/projects_rchella4/zzhan288/data/dl3dv_points/train
+#   (val_shards = the matching test directory). Each sample is 2 clean refs +
+#   3 point-splat priors + 3 clean targets, so set num_views: 3 and ref_size: 2.
+#   Priors get the panorama dropout schedule: an integer percent drawn uniformly
+#   from min_pixel_dropout..max_pixel_dropout, and that fraction of pixels set
+#   to black. nvs_probability blacks out every query in the sample;
+#   nvs_ratio does it independently per query (not both). Validation and
+#   sampling keep the stored splat. Cameras are that sample's OpenCV w2c and
+#   pinhole K, so Plücker rays go through the same path as the tars.
+data_format: webdataset
+min_pixel_dropout: 0.0        # dl3dv_points only
+max_pixel_dropout: 1.0
+nvs_probability: 0.0
+nvs_ratio: 0.0
 # One brace-expanded spec or a list of them. `pipe:cat <path>` streams local
 # tars; plain paths / URLs also work. One tar = one or more sequences.
+# For dl3dv_points these are the train / test split directories instead.
 train_shards:   # TODO: your paths
   - "pipe:cat /path/to/wds/dsim_lt_0.25/train/pairs-{000000..000033}.tar"
   - "pipe:cat /path/to/wds/dsim_0.25_0.3/train/pairs-{000000..000023}.tar"

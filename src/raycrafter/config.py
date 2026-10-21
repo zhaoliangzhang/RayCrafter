@@ -69,8 +69,15 @@ class Config:
     noise_space: str = "latent"       # "latent" | "pixel"
 
     # ── Data ───────────────────────────────────────────────────────────────
+    data_format: str = "webdataset"   # "webdataset" | "dl3dv_points"
     train_shards: Union[str, List[str]] = ""
     val_shards: Union[str, List[str]] = ""
+    # dl3dv_points only. Same draw as the panorama render-query loader:
+    # each query's dropout percent is uniform on the integers in [min, max].
+    min_pixel_dropout: float = 0.0
+    max_pixel_dropout: float = 1.0
+    nvs_probability: float = 0.0      # sample-level: every query becomes black
+    nvs_ratio: float = 0.0            # per query: that query becomes black
     image_size: List[int] = field(default_factory=lambda: [432, 768])
     num_workers: int = 1
     window: int = 15
@@ -121,10 +128,27 @@ class Config:
             "pixel_loss_t_weighting": ("none", "one_minus_t"),
             "noise_mode": ("lerp", "additive"),
             "noise_space": ("latent", "pixel"),
+            "data_format": ("webdataset", "dl3dv_points"),
         }
         for name, allowed in choices.items():
             if getattr(self, name) not in allowed:
                 raise ValueError(f"{name} must be one of {allowed}, got {getattr(self, name)!r}")
+        if not 0.0 <= float(self.min_pixel_dropout) <= float(self.max_pixel_dropout) <= 1.0:
+            raise ValueError(
+                "pixel dropout must satisfy 0 <= min_pixel_dropout <= max_pixel_dropout <= 1, "
+                f"got {self.min_pixel_dropout} and {self.max_pixel_dropout}"
+            )
+        if not 0.0 <= float(self.nvs_probability) <= 1.0:
+            raise ValueError(f"nvs_probability must be in [0, 1], got {self.nvs_probability}")
+        if not 0.0 <= float(self.nvs_ratio) <= 1.0:
+            raise ValueError(f"nvs_ratio must be in [0, 1], got {self.nvs_ratio}")
+        if float(self.nvs_probability) > 0.0 and float(self.nvs_ratio) > 0.0:
+            raise ValueError("nvs_probability (per sample) and nvs_ratio (per query) cannot both be set")
+        if self.data_format == "dl3dv_points" and (self.num_views != 3 or self.ref_size != 2):
+            raise ValueError(
+                "dl3dv_points samples are 2 reference images and 3 target views; "
+                f"got ref_size={self.ref_size} num_views={self.num_views}"
+            )
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Config":
