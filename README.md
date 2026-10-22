@@ -7,20 +7,30 @@ from a degraded render (refinement) or from pure noise (novel-view synthesis).
 
 The goal is a model that does not depend on one backbone or one camera type:
 backbone code and camera encodings are kept in separate modules. Today there is
-one backbone (FLUX.2 [klein]) and two camera encodings, SCoPE and RayRoPE, for
-pinhole cameras.
+two backbones (FLUX.2 [klein], FLUX 3 Image Klein) and four camera encodings,
+SCoPE, RayRoPE, PRoPE and UniRoPE, for pinhole cameras.
 
 - **Bridge matching.** `z_t = t·z_src + (1-t)·z_tgt`, where `t=1` is the
   source and `t=0` is clean. The model predicts the velocity `z_src - z_tgt`
   on the target-view tokens. Refs and targets go in as one token sequence
   `[ref_1 … ref_R | view_1 … view_V]`, and the backbone itself is not changed.
 - **SCoPE** (`camera_condition: scope`). For each token, the Plücker ray
-  through its patch is added to attention Q/K, plus a per-frame residual on V.
-- **RayRoPE** (`rope_type: rayrope`). 96 of the 128 RoPE channels in each head
-  are replaced by projective ray coordinates in each query camera's frame,
-  using a per-token predicted depth.
-- All camera modules start at zero. At step 0 the model is exactly the
-  pretrained backbone.
+  through its patch is added to attention Q/K (released SCoPE recipe; poses in
+  near-depth units via `near_depth_json`).
+- **RayRoPE** (`rope_type: rayrope`). The RoPE channels of each head are
+  replaced by projective ray coordinates in each query camera's frame, using a
+  per-token predicted depth.
+- **PRoPE** (`rope_type: prope`). The same 96 channels carry the relative
+  projective transform between cameras (Q·P_iᵀ, K/V·P_j⁻¹, output·P_i) plus
+  x/y RoPE on the patch grid, in one attention pass.
+- **UniRoPE** (`rope_type: unirope`, ours). Each token is a ray: RoPE on its
+  camera center, full unit direction and predicted-depth point, all moved into
+  each query camera's frame by SE(3) only. Only the ray generator knows the
+  camera model (pinhole now; an equirect generator is in place for panoramas).
+- PRoPE keeps the backbone RoPE axis that numbers the images (`t` on FLUX.2,
+  `l` on FLUX 3) and replaces the other 96 channels; RayRoPE (120 + 8
+  pass-through) and UniRoPE (126 + 2) replace the whole head. SCoPE starts at zero, so at step 0 it is exactly the
+  pretrained backbone; the RoPE methods change the attention from step 0.
 
 ## Setup
 
@@ -112,6 +122,8 @@ src/raycrafter/
   backbones/flux3.py           FLUX 3 Image Klein: loading, token packing, batched camera-aware forward
   cameras/scope.py             SCoPE: Plücker rays + Q/K/V injection (backbone-free)
   cameras/rayrope.py           RayRoPE: projective geometry + attention (backbone-free)
+  cameras/prope.py             PRoPE: relative projective transforms + attention (backbone-free)
+  cameras/unirope.py           UniRoPE: ray generators + ray-based per-camera attention (backbone-free)
   data/                        WebDataset loader, multi-view grouping, curriculum
 ```
 
@@ -119,8 +131,9 @@ src/raycrafter/
 `flux2.py` (`load_backbone`, `load_vae`, `pack_views`, `unpack_views`,
 `ref_index`, `run_transformer`, `install_camera_attention`, `camera_inputs`,
 `set_camera_context`, ...). Then add it to `BACKBONES` in `model.py` and to
-the `backbone` choices in `config.py`. Two places in `cameras/` assume FLUX.2: RayRoPE's 32 + 96
-head-channel split (`ROPE_DIM`, `RAY_DIM`), and the 16-px token patch.
+the `backbone` choices in `config.py`. Two places in `cameras/` assume FLUX-style heads: the
+32 + 96 head-channel split of RayRoPE / PRoPE (`ROPE_DIM`, `RAY_DIM`, and `rope_axis` for the
+kept axis), and the 16-px token patch.
 
 **New camera type:** cameras enter in exactly two functions.
 `scope.plucker_tokens` builds one ray per token, and
@@ -134,8 +147,11 @@ of the pipeline works on rays and is unchanged.
 This is the FLUX + SCoPE + RayRoPE path of `geometric_syncfix`, minus the LBM/SDXL
 code, ray-image layouts (rothko / checkerboard), and CameraAnything.
 The outputs and gradients of `training_step` and `sample` match the old code
-bit-for-bit. Old `transformer_*.safetensors` from scope / rayrope runs load
-directly (`resume_from`). The config keys `camera_conditioning`,
+bit-for-bit, except RayRoPE, which now follows the reference RayRoPE (unit
+camera-0/1 distance, depth head on the normalized attention input), and SCoPE,
+which now follows the released SCoPE (MLP projections, no V residual). Old
+rayrope `transformer_*.safetensors` still load (`resume_from`) but were trained
+on the old geometry; old scope checkpoints no longer match the module keys. The config keys `camera_conditioning`,
 `raymap_layout`, `use_pose`, `text_prompt`, `guidance_scale` are gone, and
 `resume_lora` is now `resume_from`. Two fixes over the old code: LoRA
 checkpoints now include the camera-module weights, and LPIPS stays in eval mode

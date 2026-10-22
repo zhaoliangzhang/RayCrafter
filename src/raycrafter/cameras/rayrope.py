@@ -1,18 +1,24 @@
-"""RayRoPE: projective-ray rotary encoding on part of each attention head.
+"""RayRoPE: projective-ray rotary encoding on the attention heads.
 
-Head layout (FLUX Klein heads are 128-d): channels ``[0:ROPE_DIM]`` keep the
-backbone's own RoPE (for FLUX, the ``t`` axis = which image), and channels
-``[ROPE_DIM:]`` are replaced by RayRoPE (``d_pj+0_3d``: camera center in the
-query frame, plus three rays at a predicted depth). RayRoPE's 12 projective
-coordinates need 24 channels per frequency, so ``RAY_DIM=96`` gives 4
-frequencies.
+Head layout (FLUX Klein heads are 128-d): RayRoPE (``d_pj+0_3d``: camera
+center in the query frame, plus three rays at a predicted depth) takes the
+whole head on image tokens, with no backbone RoPE axis kept. Its 12
+coordinates need 24 channels per frequency: 5 frequencies (adjacent periods ×3,
+as in the reference) rotate 120 channels and the last 8 pass through.
 
 Q and K of image tokens are rotated; V is not. Each camera is a query in turn:
 every image token is re-expressed in that query camera, then that camera's
 queries attend to all tokens. Text keeps the backbone RoPE.
 
+As in the reference RayRoPE, poses are normalized so camera 0 is the identity
+and camera 1 is at unit distance; the frequency ranges and depth clamps below
+assume that scale.
+
 This file is backbone-free: it works on ``[B, heads, txt+img, head_dim]``
-tensors. ``backbones/flux2.py`` wires it into FLUX blocks.
+tensors. ``backbones/flux2.py`` and ``backbones/flux3.py`` wire it into FLUX
+blocks; ``cameras/prope.py`` shares the geometry and the channel helpers for
+keeping one backbone RoPE axis (``rope_axis``: ``t`` = 0 for FLUX.2, ``l`` = 3
+for FLUX.3), and ``cameras/unirope.py`` the per-camera attention.
 """
 from __future__ import annotations
 
@@ -23,12 +29,12 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-# FLUX head layout: dims [0:32] = t, [32:128] = h, w, l.
+# FLUX head layout: dims [0:32] = t, [32:64] = h, [64:96] = w, [96:128] = l.
 ROPE_DIM = 32
 RAY_DIM = 96
 HEAD_DIM = ROPE_DIM + RAY_DIM
 NUM_COORDS = 12  # p0 xyz (3) + 3 rays * (dir xy + depth)
-NUM_FREQS = RAY_DIM // (2 * NUM_COORDS)  # 4
+NUM_FREQS = HEAD_DIM // (2 * NUM_COORDS)  # 5: 120 rotated channels, 8 pass through
 
 MAX_DEPTH = 100.0
 MAX_LOG_DEPTH = 3.0
@@ -99,8 +105,9 @@ def _intrinsics(fxfycxcy: torch.Tensor) -> torch.Tensor:
     return k3
 
 
-def _freqs(num_freqs: int, max_period: float, device: torch.device) -> torch.Tensor:
-    min_period = max_period / (FREQ_BASE ** (num_freqs - 1))
+def _freqs(num_freqs: int, max_period: float, device: torch.device, base: float = FREQ_BASE) -> torch.Tensor:
+    """``num_freqs`` log-spaced frequencies; adjacent periods differ by ``base``."""
+    min_period = max_period / (base ** (num_freqs - 1))
     log_min = math.log(2.0 * math.pi / max_period)
     log_max = math.log(2.0 * math.pi / min_period)
     return torch.exp(torch.linspace(log_min, log_max, num_freqs, device=device, dtype=torch.float32))
@@ -132,9 +139,17 @@ def prepare_geometry(
     """Camera matrices shared by every block. Poses are relative to camera 0.
 
     Cameras are ordered ``[ref..., views...]``, the same order as packed tokens.
+    Translations are scaled so camera 1 is at unit distance from camera 0
+    (RayRoPE's ``_normalize_poses_identity_unit_distance``); a pair closer than
+    1e-2 is left unscaled.
     """
     c2w = c2w.float()
     relative = torch.linalg.inv(c2w[:, :1]) @ c2w
+    if relative.shape[1] > 1:
+        dist = relative[:, 1, :3, 3].norm(dim=-1)
+        scale = torch.where(dist > 1e-2, dist, torch.ones_like(dist))
+        relative = relative.clone()
+        relative[:, :, :3, 3] /= scale[:, None, None]
     w2c = _invert_se3(relative)
     k_norm = _normalize_k(_intrinsics(fxfycxcy.float()), image_hw)
     projection = torch.matmul(_lift_k(k_norm), w2c)
@@ -164,17 +179,19 @@ def _patch_uv(patches_x: int, patches_y: int, device: torch.device) -> torch.Ten
     return torch.stack(corners, dim=1)  # (patches, rays, 2)
 
 
-def _depths(raw: torch.Tensor, num_cameras: int, num_patches: int) -> torch.Tensor:
-    """``raw`` ``[B, S, 2]`` → two depths ``[2, B, cameras, patches, rays, 1]``."""
-    batch = raw.shape[0]
-    raw = raw.reshape(batch, num_cameras, num_patches, 2)
+def depth_interval(raw: torch.Tensor) -> torch.Tensor:
+    """Depth-head output ``[..., 2]`` (log depth, sigma) → ``[2, ...]`` depths ``exp(log d ∓ sigma)``."""
     log_depth = raw[..., 0]
     sigma = raw[..., 1]
     depth_lo = torch.exp(torch.clamp(log_depth - sigma, max=MAX_LOG_DEPTH))
     depth_hi = torch.exp(torch.clamp(log_depth + sigma, max=MAX_LOG_DEPTH))
-    depths = torch.stack((depth_lo, depth_hi), dim=0)
-    depths = depths.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, -1, len(_OFFSETS), 1)
-    return depths.clamp(min=1e-2, max=MAX_DEPTH)
+    return torch.stack((depth_lo, depth_hi), dim=0).clamp(min=1e-2, max=MAX_DEPTH)
+
+
+def _depths(raw: torch.Tensor, num_cameras: int, num_patches: int) -> torch.Tensor:
+    """``raw`` ``[B, S, 2]`` → two depths ``[2, B, cameras, patches, rays, 1]``."""
+    depths = depth_interval(raw.reshape(raw.shape[0], num_cameras, num_patches, 2))
+    return depths.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, -1, len(_OFFSETS), 1)
 
 
 def _world_points(projection_inv: torch.Tensor, uv: torch.Tensor, depths: torch.Tensor) -> torch.Tensor:
@@ -188,43 +205,37 @@ def _world_points(projection_inv: torch.Tensor, uv: torch.Tensor, depths: torch.
 
 
 def _query_positions(
-    geom: dict,
-    raw_depth: torch.Tensor,
+    c2w: torch.Tensor,
+    w2c: torch.Tensor,
+    projection: torch.Tensor,
+    world: torch.Tensor,
     camera_index: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Points of every camera, expressed in camera ``camera_index``.
 
-    Returns centers ``[B, C, P, 3]``, rays ``[2, B, C, P, 9]`` (3 rays × dir xy
-    and depth, two depths), and the same tensors sliced to the query camera.
+    ``world`` is ``[2, B, C, P, R, 4]`` from :func:`_world_points`. Returns
+    centers ``[B, C, P, 3]`` and rays ``[2, B, C, P, 9]`` (3 rays × dir xy and
+    depth, two depths).
     """
-    patches_y = geom["patches_y"]
-    patches_x = geom["patches_x"]
-    num_patches = patches_y * patches_x
-    num_cameras = geom["num_cameras"]
-    depths = _depths(raw_depth.float(), num_cameras, num_patches)
-    uv = _patch_uv(patches_x, patches_y, raw_depth.device)
-    world = _world_points(geom["projection_inv"], uv, depths)
-
-    w2c_q = geom["w2c"][:, camera_index]
-    projection_q = geom["projection"][:, camera_index]
+    num_patches = world.shape[3]
+    w2c_q = w2c[:, camera_index]
+    projection_q = projection[:, camera_index]
     # Camera center in the camera-0 frame is the translation column of c2w.
-    centers = geom["c2w"][:, :, :, 3]
+    centers = c2w[:, :, :, 3]
     centers = centers.unsqueeze(2).expand(-1, -1, num_patches, -1)
     centers_q = torch.einsum("bij,bcpj->bcpi", w2c_q, centers)
     centers_q = centers_q[..., :3] / centers_q[..., 3:].clamp(min=1e-4)
 
     projected = torch.einsum("bij,ebcprj->ebcpri", projection_q, world)
-    z = projected[..., 2:3].abs().clamp(min=1e-4)
+    # sqrt(z^2 + eps) rather than |z|: smooth gradient at z = 0.
+    z = torch.sqrt(projected[..., 2:3].pow(2) + 1e-9).clamp(min=1e-4)
     homogeneous_w = projected[..., 3:4].clamp(min=1e-4)
     direction = projected[..., :3] / (projected[..., :3].norm(dim=-1, keepdim=True) + 1e-6)
     depth = (z / homogeneous_w).clamp(min=-MAX_D_F, max=MAX_D_F)
     direction_xy = direction[..., :2].flatten(-2, -1)
     depth = depth.flatten(-2, -1)
     rays = torch.cat((direction_xy, depth), dim=-1)
-
-    query_centers = centers_q[:, camera_index]
-    query_rays = rays[:, :, camera_index]
-    return centers_q, rays, query_centers, query_rays
+    return centers_q, rays
 
 
 def _pack_cos_sin(
@@ -252,21 +263,96 @@ def _pack_cos_sin(
     return cosine, sine
 
 
+@torch.compile
+def _coefficients(
+    c2w: torch.Tensor,
+    w2c: torch.Tensor,
+    projection: torch.Tensor,
+    projection_inv: torch.Tensor,
+    raw_depth: torch.Tensor,
+    patches_x: int,
+    patches_y: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """RoPE coefficients of one block (RayRoPE's ``_prepare_apply_fns``).
+
+    World points are back-projected once, then expressed in each query camera.
+    Returns query ``cos, sin`` ``[B, img, 48]`` (each token in its own camera)
+    and key ``cos, sin`` ``[C, B, img, 48]`` (all tokens, per query camera).
+    """
+    batch = raw_depth.shape[0]
+    num_cameras = c2w.shape[1]
+    num_patches = patches_y * patches_x
+    img_len = num_cameras * num_patches
+    depths = _depths(raw_depth.float(), num_cameras, num_patches)
+    uv = _patch_uv(patches_x, patches_y, raw_depth.device)
+    world = _world_points(projection_inv, uv, depths)
+
+    cos_k, sin_k, query_centers, query_rays = [], [], [], []
+    for camera_index in range(num_cameras):
+        centers, rays = _query_positions(c2w, w2c, projection, world, camera_index)
+        cosine, sine = _pack_cos_sin(
+            centers.reshape(batch, img_len, 3), rays.reshape(2, batch, img_len, 9)
+        )
+        cos_k.append(cosine)
+        sin_k.append(sine)
+        query_centers.append(centers[:, camera_index])
+        query_rays.append(rays[:, :, camera_index])
+    cos_q, sin_q = _pack_cos_sin(
+        torch.stack(query_centers, dim=1).reshape(batch, img_len, 3),
+        torch.stack(query_rays, dim=2).reshape(2, batch, img_len, 9),
+    )
+    return cos_q, sin_q, torch.stack(cos_k), torch.stack(sin_k)
+
+
 def _rotate(feats: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    """RayRoPE rotation on the last 96 channels. ``feats`` is ``[B, H, S, 96]``."""
-    half = RAY_DIM // 2
-    x1, x2 = feats[..., :half], feats[..., half:]
+    """Split-half rotation of the first ``2 * cos.shape[-1]`` of the 96 camera
+    channels (all of them for RayRoPE); the rest pass through. ``feats`` is
+    ``[B, H, S, 96]``, ``cos`` / ``sin`` ``[B, S, half]``."""
+    half = cos.shape[-1]
+    x1, x2, rest = feats[..., :half], feats[..., half : 2 * half], feats[..., 2 * half :]
     cos = cos[:, None].to(dtype=feats.dtype)
     sin = sin[:, None].to(dtype=feats.dtype)
     rotated_1 = x1 * cos + x2 * sin
     rotated_2 = -x1 * sin + x2 * cos
-    return torch.cat((rotated_1, rotated_2), dim=-1)
+    return torch.cat((rotated_1, rotated_2, rest), dim=-1)
 
 
-def _mix(rope_feats: torch.Tensor, content: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    """Keep the pretrained ``t`` RoPE; replace the other 96 channels."""
-    rotated = _rotate(content[..., ROPE_DIM:], cos, sin)
-    return torch.cat((rope_feats[..., :ROPE_DIM], rotated), dim=-1)
+@torch.compile
+def _mix(
+    rope_feats: torch.Tensor, content: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
+    rope_axis: Optional[int],
+) -> torch.Tensor:
+    """Keep the pretrained RoPE of ``rope_axis`` and replace the other 96 channels;
+    with ``rope_axis=None`` the camera encoding takes the whole head."""
+    if rope_axis is None:
+        return _rotate(content, cos, sin)
+    _, camera_channels = split_channels(content, rope_axis)
+    kept, _ = split_channels(rope_feats, rope_axis)
+    return merge_channels(kept, _rotate(camera_channels, cos, sin), rope_axis)
+
+
+def split_channels(feats: torch.Tensor, rope_axis: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """``[..., 128]`` → the kept backbone-RoPE channels ``[..., 32]`` and the
+    camera channels ``[..., 96]`` (the other three axes, in order)."""
+    start = rope_axis * ROPE_DIM
+    end = start + ROPE_DIM
+    return feats[..., start:end], torch.cat((feats[..., :start], feats[..., end:]), dim=-1)
+
+
+def merge_channels(kept: torch.Tensor, camera_channels: torch.Tensor, rope_axis: int) -> torch.Tensor:
+    """Inverse of :func:`split_channels`."""
+    start = rope_axis * ROPE_DIM
+    return torch.cat((camera_channels[..., :start], kept, camera_channels[..., start:]), dim=-1)
+
+
+def subset_geometry(geom: dict, start: int, end: int) -> dict:
+    """Geometry of cameras ``start:end``, in the same normalized frame."""
+    out = dict(geom)
+    for key in ("c2w", "w2c", "projection", "projection_inv", "directions"):
+        if key in geom:
+            out[key] = geom[key][:, start:end]
+    out["num_cameras"] = end - start
+    return out
 
 
 
@@ -282,18 +368,20 @@ def rayrope_attention(
     geom: dict,
     q_extra: Optional[torch.Tensor] = None,
     k_extra: Optional[torch.Tensor] = None,
+    rope_axis: int = 0,
 ) -> torch.Tensor:
     """Full attention with per-camera RayRoPE on image queries.
 
     ``*_content`` are Q/K before any RoPE and ``*_rope`` after the backbone
-    RoPE; both are ``[B, heads, txt+img, HEAD_DIM]``. Images are packed
-    ``[ref..., views...]``. ``raw_depth`` is ``[B, img, 2]`` from a
-    :class:`DepthHead`. ``q_extra`` / ``k_extra`` (e.g. SCoPE) are added after
-    the ray rotation and must be zero on text.
+    RoPE; both are ``[B, heads, txt+img, HEAD_DIM]``. Images are packed in
+    camera order (``[ref..., views...]``). ``raw_depth`` is ``[B, img, 2]``
+    from a :class:`DepthHead`. ``q_extra`` / ``k_extra`` (e.g. SCoPE) are
+    added after the ray rotation and must be zero on text. ``rope_axis`` is
+    accepted for the shared call signature and unused: RayRoPE replaces the
+    whole head on image tokens.
 
     Returns ``[B, txt+img, heads*HEAD_DIM]``.
     """
-    from einops import rearrange
 
     batch, heads, seqlen, dim = q_content.shape
     if dim != HEAD_DIM:
@@ -309,6 +397,44 @@ def rayrope_attention(
     if raw_depth.shape[1] != img_len:
         raise RuntimeError(f"Depth head length {raw_depth.shape[1]} != image tokens {img_len}")
 
+    # Geometry in fp32: under bf16 autocast the einsums would round the
+    # coordinates, which the highest frequencies turn into ~0.5 rad of phase noise.
+    with torch.autocast(device_type=q_content.device.type, enabled=False):
+        cos_q, sin_q, cos_k, sin_k = _coefficients(
+            geom["c2w"], geom["w2c"], geom["projection"], geom["projection_inv"],
+            raw_depth, geom["patches_x"], geom["patches_y"],
+        )
+    return per_camera_attention(
+        q_content, k_content, v, q_rope, k_rope, num_txt, cos_q, sin_q, cos_k, sin_k,
+        num_patches, q_extra, k_extra, rope_axis=None,
+    )
+
+
+def per_camera_attention(
+    q_content: torch.Tensor,
+    k_content: torch.Tensor,
+    v: torch.Tensor,
+    q_rope: torch.Tensor,
+    k_rope: torch.Tensor,
+    num_txt: int,
+    cos_q: torch.Tensor,
+    sin_q: torch.Tensor,
+    cos_k: torch.Tensor,
+    sin_k: torch.Tensor,
+    num_patches: int,
+    q_extra: Optional[torch.Tensor] = None,
+    k_extra: Optional[torch.Tensor] = None,
+    rope_axis: Optional[int] = 0,
+) -> torch.Tensor:
+    """Each camera's queries attend to all tokens rotated into that camera's frame.
+
+    ``cos_q`` / ``sin_q`` ``[B, img, half]`` place every image token in its own
+    camera; ``cos_k`` / ``sin_k`` ``[C, B, img, half]`` place all image tokens in
+    query camera ``c``. ``rope_axis`` is the backbone RoPE axis kept, or ``None``
+    when the coefficients cover the whole head. Shared by RayRoPE and UniRoPE.
+    """
+    from einops import rearrange
+
     outputs = []
     if num_txt:
         outputs.append(
@@ -320,25 +446,18 @@ def rayrope_attention(
     q_img_rope = q_rope[:, :, num_txt:]
     k_img_rope = k_rope[:, :, num_txt:]
     k_txt = k_rope[:, :, :num_txt]
+    q_img = _mix(q_img_rope, q_img_content, cos_q, sin_q, rope_axis)
+    if q_extra is not None:
+        q_img = q_img + q_extra[:, :, num_txt:]
     image_outs = []
-    for camera_index in range(num_cameras):
-        centers, rays, query_centers, query_rays = _query_positions(geom, raw_depth, camera_index)
-        cos_k, sin_k = _pack_cos_sin(
-            centers.reshape(batch, img_len, 3), rays.reshape(2, batch, img_len, 9)
-        )
-        cos_q, sin_q = _pack_cos_sin(
-            query_centers.reshape(batch, num_patches, 3),
-            query_rays.reshape(2, batch, num_patches, 9),
-        )
+    for camera_index in range(cos_k.shape[0]):
         start = camera_index * num_patches
         end = start + num_patches
-        k_img = _mix(k_img_rope, k_img_content, cos_k, sin_k)
+        k_img = _mix(k_img_rope, k_img_content, cos_k[camera_index], sin_k[camera_index], rope_axis)
         if k_extra is not None:
             k_img = k_img + k_extra[:, :, num_txt:]
         k_all = torch.cat((k_txt, k_img), dim=2) if num_txt else k_img
-        q_i = _mix(q_img_rope[:, :, start:end], q_img_content[:, :, start:end], cos_q, sin_q)
-        if q_extra is not None:
-            q_i = q_i + q_extra[:, :, num_txt + start : num_txt + end]
+        q_i = q_img[:, :, start:end]
         image_outs.append(F.scaled_dot_product_attention(q_i, k_all, v, is_causal=False))
 
     outputs.append(torch.cat(image_outs, dim=2))

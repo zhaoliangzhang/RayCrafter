@@ -9,7 +9,7 @@ Token sequence (one flat self-attention sequence, no channel surgery):
   Gaussian noise for novel-view synthesis (``noise_space=latent``, alpha=1).
 * Refs are clean and stay clean at every t.
 * Cameras are ordered ``[ref..., views...]`` and enter only through the
-  camera modules (SCoPE on Q/K/V, RayRoPE on the RoPE channels).
+  camera modules (SCoPE on Q/K/V, RayRoPE or PRoPE on the RoPE channels).
 
 The loss is MSE on the velocity ``z_src - z_tgt`` of the V view tokens, plus
 optional LPIPS / L1 on the decoded one-step estimate ``x0 = z_t - t·v``.
@@ -22,6 +22,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from safetensors.torch import load_file as load_sft
+from torch.utils.checkpoint import checkpoint
 
 from .backbones import flux2, flux3
 from .config import Config
@@ -51,7 +52,7 @@ class RayCrafterModel(nn.Module):
 
         # Added after freeze_base_model, so camera modules always train.
         backbone.install_camera_attention(
-            self.transformer, scope=cfg.uses_scope, rayrope=cfg.uses_rayrope
+            self.transformer, scope=cfg.uses_scope, rope_type=cfg.rope_type
         )
         print(f"camera_condition={cfg.camera_condition}  rope_type={cfg.rope_type}")
 
@@ -161,7 +162,7 @@ class RayCrafterModel(nn.Module):
         cams = None
         if self.cfg.needs_cameras:
             cams = self.backbone.camera_inputs(
-                c2w, fxfycxcy, (H, W), (h, w), self.cfg.uses_scope, self.cfg.uses_rayrope
+                c2w, fxfycxcy, (H, W), (h, w), self.cfg.uses_scope, self.cfg.rope_type
             )
         return z_src, z_tgt, x_ref.to(self._dtype), ref_ids.to(src_imgs.device), cams, (h, w)
 
@@ -169,7 +170,10 @@ class RayCrafterModel(nn.Module):
         """One transformer pass; returns the predicted velocity of the view tokens."""
         self.backbone.set_camera_context(self.transformer, cams)
         # Autocast lets training keep fp32 master weights while matmuls run in bf16.
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=self._dtype == torch.bfloat16):
+        # No cast cache: each weight is used once per forward, and the cache would
+        # hold a bf16 copy of every weight until the forward ends (~10 GB for FLUX 3).
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=self._dtype == torch.bfloat16,
+                            cache_enabled=False):
             return self.backbone.run_transformer(
                 self.transformer, x_ref, ref_ids, x_views, view_ids, t.to(self._dtype)
             )
@@ -247,8 +251,13 @@ class RayCrafterModel(nn.Module):
             z = z[..., i:i + ch, j:j + cw]
             tgt = tgt[..., i * P:(i + ch) * P, j * P:(j + cw) * P]
 
+        # One image at a time, recomputed in backward: the full-resolution decoder
+        # activations of every view would otherwise stay alive until the loss backward.
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            pred = self.ae.decode(z.float())
+            pred = torch.cat([
+                checkpoint(self.ae.decode, zi, use_reentrant=False) if torch.is_grad_enabled() else self.ae.decode(zi)
+                for zi in z.float().split(1)
+            ])
         pred, tgt = pred.float(), tgt.float()
         l1_l = (pred - tgt).abs().mean(dim=(1, 2, 3))
         lpips_l = self.lpips(pred, tgt).flatten() if self.lpips is not None else torch.zeros_like(l1_l)

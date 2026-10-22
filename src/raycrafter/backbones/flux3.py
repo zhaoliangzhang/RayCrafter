@@ -10,6 +10,11 @@ are the ``image`` mode (timestep t, RoPE l = 0..V-1), the refs are
 ``image_cond`` (timestep 0, RoPE l = -1, -2, ..., as in FLUX 3 editing), and
 there is no text, so the text stream never runs and stays frozen.
 
+Camera modules sit in every block that sees image tokens. In the per-mode
+blocks each mode uses only its own cameras (refs or views). RayRoPE, PRoPE and
+UniRoPE keep the ``l`` RoPE axis (channels 96:128, which tells images apart in FLUX 3)
+and replace ``t, h, w``.
+
 FLUX 3 code comes from https://github.com/black-forest-labs/flux-3-image-klein (see README).
 """
 from __future__ import annotations
@@ -40,11 +45,17 @@ except ImportError:
 from flux3.autoencoder import latent_ids
 from flux3.dit import DEPTH, HIDDEN, DiT, layernorm_modulation, rope_embed, timestep_embedding
 
+from ..cameras.prope import prope_attention
+from ..cameras.rayrope import DepthHead, subset_geometry
 from ..cameras.scope import SightlineCoordinatePE, scope_qkv
-from .flux2 import PATCH, _hf_download, camera_inputs, load_vae, set_camera_context, unpack_views  # noqa: F401
+from .flux2 import (  # noqa: F401
+    DEPTH_ATTENTION, DEPTH_HEADS, PATCH, _hf_download, camera_inputs, load_vae, set_camera_context, unpack_views,
+)
 
 # flux3.pipeline.IMAGE_ROPE_SCALE: image RoPE (h, w) ids are the latent grid × 0.5.
 IMAGE_ROPE_SCALE = 0.5
+# RoPE axis (t, h, w, l) that RayRoPE / PRoPE keep: l numbers the images.
+ROPE_AXIS = 3
 
 VARIANTS = {
     # Undistilled base. The distilled flux-3-image-klein is a flow map (it also
@@ -62,17 +73,50 @@ _TEXT_PREFIXES = (
 )
 
 
-def _block_forward(block: nn.Module, x, freqs, mod, plucker, num_frames: int) -> torch.Tensor:
+def _norm_rope(x: torch.Tensor, scale: torch.Tensor, freqs: torch.Tensor, eps: float = 1e-6):
+    """``flux3.dit.rmsnorm_rope`` (same ops), also returning the normalized
+    input before RoPE. Returns ``(content, rotated)`` in ``x.dtype``."""
+    with torch.autocast(device_type=x.device.type, enabled=False):
+        b, h, l, d = x.shape
+        x_f = x.float()
+        x_norm = x_f * x_f.pow(2).mean(-1, keepdim=True).add(eps).rsqrt() * scale.float()
+        x_r, freqs = x_norm.reshape(b, h, l, d // 2, 1, 2), freqs.float()
+        rotated = freqs[..., 0] * x_r[..., 0] + freqs[..., 1] * x_r[..., 1]
+        return x_norm.to(x.dtype), rotated.reshape(b, h, l, d).to(x.dtype)
+
+
+def _block_forward(block: nn.Module, x, freqs, mod, plucker, num_frames: int, geom, rope_type: str) -> torch.Tensor:
     """``flux3.dit.Block.forward`` on batched ``(B, L, D)`` tokens, with SCoPE
-    added to Q/K/V after RoPE when ``plucker`` is given."""
+    (when ``plucker`` is given) and RayRoPE / PRoPE / UniRoPE (``rope_type``) for the
+    cameras in ``geom``."""
     shift, scale, gate = mod
     x_mod = layernorm_modulation(x, scale, shift)
     split = lambda t: t.unflatten(-1, (block.heads, -1)).transpose(1, 2)  # B L (H D) -> B H L D
-    q, k = block.norm(split(block.q_proj(x_mod)), split(block.k_proj(x_mod)), freqs)
-    v = split(block.v_proj(x_mod)).to(q.dtype)
-    if plucker is not None:
-        q, k, v = scope_qkv(block.scope_pe, q, k, v, 0, plucker, num_frames)
-    attn = F.scaled_dot_product_attention(q, k, v).transpose(1, 2).flatten(2)
+    q, k, v = split(block.q_proj(x_mod)), split(block.k_proj(x_mod)), split(block.v_proj(x_mod))
+    if rope_type == "flux":
+        q, k = block.norm(q, k, freqs)
+        v = v.to(q.dtype)
+        if plucker is not None:
+            q, k, v = scope_qkv(block.scope_pe, q, k, v, 0, plucker, num_frames)
+        attn = F.scaled_dot_product_attention(q, k, v).transpose(1, 2).flatten(2)
+    else:
+        q_content, q_rope = _norm_rope(q, block.norm.query_norm.scale, freqs)
+        k_content, k_rope = _norm_rope(k, block.norm.key_norm.scale, freqs)
+        v = v.to(q_rope.dtype)
+        q_extra = k_extra = None
+        if plucker is not None:
+            # SCoPE shifts computed on zeros, then added after the camera RoPE.
+            q_extra, k_extra, v = scope_qkv(
+                block.scope_pe, torch.zeros_like(q_rope), torch.zeros_like(k_rope), v, 0, plucker, num_frames
+            )
+        if rope_type == "prope":
+            attn = prope_attention(q_content, k_content, v, q_rope, k_rope, 0, geom, q_extra, k_extra, ROPE_AXIS)
+        else:
+            # The depth head reads the normalized, modulated QKV input.
+            depth = getattr(block, DEPTH_HEADS[rope_type])(x_mod)
+            attn = DEPTH_ATTENTION[rope_type](
+                q_content, k_content, v, q_rope, k_rope, 0, depth, geom, q_extra, k_extra, ROPE_AXIS
+            )
     gate_in, up = block.mlp_in(x_mod).chunk(2, dim=-1)
     return x + gate * (block.attn_out(attn) + block.mlp_out(F.silu(gate_in) * up))
 
@@ -85,6 +129,7 @@ class Flux3(DiT):
         super().__init__(flow_map=False)
         self.gradient_checkpointing = False
         self._camera: Optional[dict] = None
+        self._rope_type = "flux"
 
     def _block(self, block: nn.Module, *args) -> torch.Tensor:
         if self.gradient_checkpointing and torch.is_grad_enabled():
@@ -95,18 +140,22 @@ class Flux3(DiT):
         """Velocity of the view tokens ``(B, V*h*w, 128)``. Ids are ``(B, L, 4)``."""
         num_views, num_refs = x_views.shape[1], x_ref.shape[1]
         has_scope = hasattr(self.single_blocks[0], "scope_pe")
-        plucker = self._camera["plucker"] if self._camera is not None else None
-        if has_scope and plucker is None:
-            raise RuntimeError("SCoPE is installed but no cameras were set for this forward")
-        if has_scope:
-            # Rays are ordered [ref..., views...]; every frame has the same token count.
+        rope_type = self._rope_type
+        if (has_scope or rope_type != "flux") and self._camera is None:
+            raise RuntimeError("camera conditioning is installed but no cameras were set for this forward")
+        plucker = self._camera["plucker"] if has_scope else None
+        geom = self._camera["geom"] if rope_type != "flux" else None
+        ref_rays = view_rays = ref_geom = view_geom = None
+        frames = r_frames = v_frames = 0
+        if self._camera is not None:
+            # Cameras are ordered [ref..., views...]; every frame has the same token count.
             frames = self._camera["num_frames"]
             per_frame = (num_refs + num_views) // frames
-            ref_rays, view_rays = plucker[:, :num_refs], plucker[:, num_refs:]
             r_frames, v_frames = num_refs // per_frame, num_views // per_frame
-        else:
-            plucker = ref_rays = view_rays = None
-            frames = r_frames = v_frames = 0
+        if plucker is not None:
+            ref_rays, view_rays = plucker[:, :num_refs], plucker[:, num_refs:]
+        if geom is not None:
+            ref_geom, view_geom = subset_geometry(geom, 0, r_frames), subset_geometry(geom, r_frames, frames)
 
         vec_img = self.time_in(timestep_embedding(timesteps))
         vec_ref = self.time_in(timestep_embedding(torch.zeros_like(timesteps)))  # refs are clean
@@ -118,8 +167,10 @@ class Flux3(DiT):
         ref = self.emb_in["image_cond"](x_ref)
         freqs_img, freqs_ref = rope_embed(view_ids), rope_embed(ref_ids)
         for d in range(DEPTH):
-            img = self._block(self.content_mode_blocks["image"][d], img, freqs_img, early_img, view_rays, v_frames)
-            ref = self._block(self.content_mode_blocks["image_cond"][d], ref, freqs_ref, early_ref, ref_rays, r_frames)
+            img = self._block(self.content_mode_blocks["image"][d], img, freqs_img, early_img,
+                              view_rays, v_frames, view_geom, rope_type)
+            ref = self._block(self.content_mode_blocks["image_cond"][d], ref, freqs_ref, early_ref,
+                              ref_rays, r_frames, ref_geom, rope_type)
 
         # Single stream: [refs | views], the camera order. Position comes from the
         # RoPE ids, so the order does not change attention.
@@ -131,7 +182,7 @@ class Flux3(DiT):
                             mod(self.single_stream_modulations["image"], vec_img))
         )
         for block in self.single_blocks:
-            h = self._block(block, h, freqs, single, plucker, frames)
+            h = self._block(block, h, freqs, single, plucker, frames, geom, rope_type)
         return self.final_layer["image"](h[:, num_refs:], vec_img.unsqueeze(1))
 
 
@@ -181,20 +232,24 @@ def run_transformer(transformer: nn.Module, x_ref, ref_ids, x_views, view_ids, t
 # ── Camera conditioning ─────────────────────────────────────────────────────
 
 
-def install_camera_attention(transformer: Flux3, scope: bool, rayrope: bool) -> None:
-    """Add a zero-init SCoPE module to every block that sees image tokens.
+def install_camera_attention(transformer: Flux3, scope: bool, rope_type: str) -> None:
+    """Add camera modules to every block that sees image tokens.
 
-    The module name (``scope_pe``) is a checkpoint key.
+    ``rope_type`` is ``flux``, ``rayrope``, ``prope`` (no parameters),
+    ``unirope`` or ``unirope_anchor``. Module names (``scope_pe`` and the ``DEPTH_HEADS`` values)
+    are checkpoint keys.
     """
-    if rayrope:
-        raise NotImplementedError("RayRoPE is FLUX.2-only; use rope_type: flux with backbone: flux3")
-    if not scope:
+    transformer._rope_type = rope_type
+    if not scope and rope_type not in DEPTH_HEADS:
         return
     ref = next(transformer.parameters())
     blocks = [*transformer.content_mode_blocks["image"], *transformer.content_mode_blocks["image_cond"],
               *transformer.single_blocks]
     for block in blocks:
-        block.scope_pe = SightlineCoordinatePE(HIDDEN).to(device=ref.device, dtype=ref.dtype)
+        if scope:
+            block.scope_pe = SightlineCoordinatePE(HIDDEN).to(device=ref.device, dtype=ref.dtype)
+        if rope_type in DEPTH_HEADS:
+            setattr(block, DEPTH_HEADS[rope_type], DepthHead(HIDDEN).to(device=ref.device, dtype=ref.dtype))
 
 
 def enable_gradient_checkpointing(transformer: Flux3) -> None:

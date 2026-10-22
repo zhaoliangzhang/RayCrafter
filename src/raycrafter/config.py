@@ -33,7 +33,7 @@ class Config:
 
     # ── Camera conditioning ────────────────────────────────────────────────
     camera_condition: str = "scope"   # "none" | "scope"
-    rope_type: str = "rayrope"        # "flux" | "rayrope"
+    rope_type: str = "rayrope"        # "flux" | "rayrope" | "prope" | "unirope" | "unirope_anchor"
 
     # ── Training ───────────────────────────────────────────────────────────
     batch_size: int = 1
@@ -78,6 +78,10 @@ class Config:
     max_pixel_dropout: float = 1.0
     nvs_probability: float = 0.0      # sample-level: every query becomes black
     nvs_ratio: float = 0.0            # per query: that query becomes black
+    # dl3dv_points only: {scene_name: {"near_depth": d}} from
+    # scripts/estimate_near_depth_dl3dv_points.py. Translations are divided by
+    # d (SCoPE's near-depth normalization); scenes without one are dropped.
+    near_depth_json: Optional[str] = None
     image_size: List[int] = field(default_factory=lambda: [432, 768])
     num_workers: int = 1
     window: int = 15
@@ -106,12 +110,8 @@ class Config:
         return self.camera_condition == "scope"
 
     @property
-    def uses_rayrope(self) -> bool:
-        return self.rope_type == "rayrope"
-
-    @property
     def needs_cameras(self) -> bool:
-        return self.uses_scope or self.uses_rayrope
+        return self.uses_scope or self.rope_type != "flux"
 
     @property
     def use_pose(self) -> bool:
@@ -122,7 +122,7 @@ class Config:
         choices = {
             "backbone": ("flux2", "flux3"),
             "camera_condition": ("none", "scope"),
-            "rope_type": ("flux", "rayrope"),
+            "rope_type": ("flux", "rayrope", "prope", "unirope", "unirope_anchor"),
             "lr_schedule": ("cosine", "constant"),
             "mixed_precision": ("bf16", "fp32"),
             "pixel_loss_t_weighting": ("none", "one_minus_t", "one_minus_t_noise"),

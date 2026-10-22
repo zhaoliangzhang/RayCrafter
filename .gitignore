@@ -3,6 +3,7 @@ __pycache__/
 *.egg-info/
 .venv/
 
+bash_outputs/
 outputs/
 wandb/
 *.safetensors
@@ -10,3 +11,4 @@ wandb/
 *.pt
 *.pth
 *.tar
+.inductor_cache/

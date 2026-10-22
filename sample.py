@@ -63,6 +63,7 @@ def main(
         shards or cfg.val_shards, num_views=cfg.num_views, ref_size=cfg.ref_size,
         image_size=tuple(cfg.image_size), batch_size=1, num_workers=1,
         use_pose=cfg.use_pose, shuffle=False, repeat=False, window=cfg.window,
+        data_format=cfg.data_format,
     )
     out = Path(out_dir or Path(ckpt).parent / f"samples_{Path(ckpt).stem}_{mode}_n{num_steps}")
     out.mkdir(parents=True, exist_ok=True)

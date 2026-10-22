@@ -37,8 +37,17 @@ from flux2.autoencoder import AutoEncoder, AutoEncoderParams
 from flux2.model import Flux2, Flux2Params, Klein4BParams, Klein9BParams, apply_rope
 from flux2.sampling import prc_img
 
+from ..cameras.prope import prope_attention
 from ..cameras.rayrope import DepthHead, prepare_geometry, rayrope_attention
 from ..cameras.scope import SightlineCoordinatePE, plucker_tokens, scope_qkv
+from ..cameras.unirope import prepare_unirope, unirope_anchor_attention, unirope_attention
+
+# Depth-head attribute (a checkpoint key) per rope_type that predicts depth.
+DEPTH_HEADS = {"rayrope": "rayrope_depth", "unirope": "unirope_depth", "unirope_anchor": "unirope_depth"}
+# Attention of each depth-predicting rope_type.
+DEPTH_ATTENTION = {
+    "rayrope": rayrope_attention, "unirope": unirope_attention, "unirope_anchor": unirope_anchor_attention,
+}
 
 # VAE: 16× downsampling, 128 latent channels → one 128-ch token per 16×16 patch.
 PATCH = 16
@@ -165,13 +174,18 @@ def camera_inputs(
     image_hw: Tuple[int, int],
     latent_hw: Tuple[int, int],
     scope: bool,
-    rayrope: bool,
+    rope_type: str,
 ) -> dict:
     """Per-forward camera tensors, shared by every block."""
+    geometry = {
+        "flux": None, "rayrope": prepare_geometry, "prope": prepare_geometry,
+        "unirope": prepare_unirope, "unirope_anchor": prepare_unirope,
+    }
     with torch.no_grad():
+        prepare = geometry[rope_type]
         return {
             "plucker": plucker_tokens(c2w, fxfycxcy, image_hw, latent_hw, PATCH) if scope else None,
-            "geom": prepare_geometry(c2w, fxfycxcy, image_hw, latent_hw) if rayrope else None,
+            "geom": prepare(c2w, fxfycxcy, image_hw, latent_hw) if prepare else None,
             "num_frames": int(c2w.shape[1]),
         }
 
@@ -182,15 +196,20 @@ def set_camera_context(transformer: nn.Module, ctx: Optional[dict]) -> None:
         host._camera = ctx
 
 
-def _attention(block: nn.Module, q, k, v, pe, num_txt: int, image_tokens: torch.Tensor) -> torch.Tensor:
-    """FLUX attention with SCoPE and/or RayRoPE. Returns ``[B, txt+img, heads*dim]``."""
+def _attention(block: nn.Module, q, k, v, pe, num_txt: int, depth_tokens: Optional[torch.Tensor]) -> torch.Tensor:
+    """FLUX attention with SCoPE and/or RayRoPE / PRoPE / UniRoPE. Returns ``[B, txt+img, heads*dim]``.
+
+    ``depth_tokens`` are the image tokens the depth head reads (``None``
+    without RayRoPE / UniRoPE).
+    """
     ctx = block._camera_host._camera
     if ctx is None:
         raise RuntimeError("camera conditioning is installed but no cameras were set for this forward")
     q_rope, k_rope = apply_rope(q, k, pe)
     has_scope = hasattr(block, "scope_pe")
+    rope_type = block._camera_host._rope_type
 
-    if not hasattr(block, "rayrope_depth"):
+    if rope_type == "flux":
         q_rope, k_rope, v = scope_qkv(
             block.scope_pe, q_rope, k_rope, v, num_txt, ctx["plucker"], ctx["num_frames"]
         )
@@ -199,40 +218,58 @@ def _attention(block: nn.Module, q, k, v, pe, num_txt: int, image_tokens: torch.
 
     q_extra = k_extra = None
     if has_scope:
-        # SCoPE shifts computed on zeros, then added after the ray rotation.
+        # SCoPE shifts computed on zeros, then added after the camera RoPE.
         q_extra, k_extra, v = scope_qkv(
             block.scope_pe, torch.zeros_like(q_rope), torch.zeros_like(k_rope), v,
             num_txt, ctx["plucker"], ctx["num_frames"],
         )
-    depth = block.rayrope_depth(image_tokens)
-    return rayrope_attention(q, k, v, q_rope, k_rope, num_txt, depth, ctx["geom"], q_extra, k_extra)
+    if rope_type == "prope":
+        return prope_attention(q, k, v, q_rope, k_rope, num_txt, ctx["geom"], q_extra, k_extra)
+    depth = getattr(block, DEPTH_HEADS[rope_type])(depth_tokens)
+    return DEPTH_ATTENTION[rope_type](q, k, v, q_rope, k_rope, num_txt, depth, ctx["geom"], q_extra, k_extra)
+
+
+# The depth head reads the normalized, modulated tokens that feed the QKV
+# projection, as RayRoPE's depth head reads its pre-norm attention input.
+# Recomputed here because the FLUX block does not return them.
 
 
 def _double_forward(self, img, txt, pe, pe_ctx, mod_img, mod_txt, num_ref_tokens):
     q, k, v, pe_full, num_txt, mods = self._prepare_qkv(img, txt, pe, pe_ctx, mod_img, mod_txt)
-    attn = _attention(self, q, k, v, pe_full, num_txt, img)
+    depth_tokens = None
+    if self._camera_host._rope_type in DEPTH_HEADS:
+        shift, scale, _ = mod_img[0]
+        depth_tokens = (1 + scale) * self.img_norm1(img) + shift
+    attn = _attention(self, q, k, v, pe_full, num_txt, depth_tokens)
     img, txt = self._apply_residuals(img, txt, attn[:, num_txt:], attn[:, :num_txt], mods)
     return img, txt, {}
 
 
 def _single_forward(self, x, pe, mod, num_txt_tokens, num_ref_tokens):
     q, k, v, mlp, mod_gate = self._qkv(x, mod)
-    attn = _attention(self, q, k, v, pe, num_txt_tokens, x[:, num_txt_tokens:])
+    depth_tokens = None
+    if self._camera_host._rope_type in DEPTH_HEADS:
+        shift, scale, _ = mod
+        depth_tokens = ((1 + scale) * self.pre_norm(x) + shift)[:, num_txt_tokens:]
+    attn = _attention(self, q, k, v, pe, num_txt_tokens, depth_tokens)
     return self._out(x, attn, mlp, mod_gate), {}
 
 
-def install_camera_attention(transformer: Flux2, scope: bool, rayrope: bool) -> None:
-    """Add zero-init camera modules to every block and patch its attention.
+def install_camera_attention(transformer: Flux2, scope: bool, rope_type: str) -> None:
+    """Add camera modules to every block and patch its attention.
 
-    Module names (``scope_pe``, ``rayrope_depth``) are checkpoint keys.
+    ``rope_type`` is ``flux`` (backbone RoPE only), ``rayrope``, ``prope`` (no
+    parameters), ``unirope`` or ``unirope_anchor``. Module names (``scope_pe`` and the
+    ``DEPTH_HEADS`` values) are checkpoint keys.
     """
-    if not (scope or rayrope):
+    if not scope and rope_type == "flux":
         return
     ref = next(transformer.parameters())
     hidden = transformer.hidden_size
-    if rayrope and hidden // transformer.num_heads != 128:
-        raise RuntimeError(f"RayRoPE needs 128-d heads, got {hidden // transformer.num_heads}")
+    if rope_type != "flux" and hidden // transformer.num_heads != 128:
+        raise RuntimeError(f"{rope_type} needs 128-d heads, got {hidden // transformer.num_heads}")
     transformer._camera = None
+    transformer._rope_type = rope_type
 
     def bind(block: nn.Module, forward) -> None:
         # object.__setattr__: a normal assignment would register the transformer
@@ -240,8 +277,8 @@ def install_camera_attention(transformer: Flux2, scope: bool, rayrope: bool) -> 
         object.__setattr__(block, "_camera_host", transformer)
         if scope:
             block.scope_pe = SightlineCoordinatePE(hidden).to(device=ref.device, dtype=ref.dtype)
-        if rayrope:
-            block.rayrope_depth = DepthHead(hidden).to(device=ref.device, dtype=ref.dtype)
+        if rope_type in DEPTH_HEADS:
+            setattr(block, DEPTH_HEADS[rope_type], DepthHead(hidden).to(device=ref.device, dtype=ref.dtype))
         block.forward_kv_extract = forward.__get__(block, block.__class__)
 
     for block in transformer.double_blocks:

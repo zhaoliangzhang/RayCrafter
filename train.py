@@ -113,6 +113,11 @@ def train(config: str) -> None:
                 if (cfg.enable_curriculum or cfg.noise_levels) else None)
     common = dict(num_views=cfg.num_views, ref_size=cfg.ref_size, image_size=tuple(cfg.image_size),
                   batch_size=cfg.batch_size, use_pose=cfg.use_pose, window=cfg.window)
+    points = dict(
+        data_format=cfg.data_format, min_pixel_dropout=cfg.min_pixel_dropout,
+        max_pixel_dropout=cfg.max_pixel_dropout, nvs_probability=cfg.nvs_probability,
+        nvs_ratio=cfg.nvs_ratio, near_depth_json=cfg.near_depth_json,
+    )
     train_loader = make_dataloader(
         cfg.train_shards, num_workers=cfg.num_workers, shuffle=True,
         enable_curriculum=cfg.enable_curriculum, curriculum_sigma=cfg.curriculum_sigma,
@@ -122,11 +127,13 @@ def train(config: str) -> None:
         curriculum_start_probs=cfg.curriculum_start_probs,
         curriculum_end_probs=cfg.curriculum_end_probs,
         noise_levels=cfg.noise_levels, noise_mode=cfg.noise_mode, noise_space=cfg.noise_space,
-        curriculum_progress=progress, open_sequences=cfg.open_sequences, **common,
+        curriculum_progress=progress, open_sequences=cfg.open_sequences, **points, **common,
     )
     val_loader = None
     if cfg.val_shards:
-        val_loader = make_dataloader(cfg.val_shards, num_workers=1, shuffle=False, repeat=False, **common)
+        val_loader = make_dataloader(
+            cfg.val_shards, num_workers=1, shuffle=False, repeat=False, **points, **common,
+        )
 
     steps = cfg.num_inference_steps if isinstance(cfg.num_inference_steps, list) else [cfg.num_inference_steps]
     train_iter = iter(train_loader)

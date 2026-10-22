@@ -2,11 +2,15 @@
 
 Each image token gets one Plücker ray (direction, moment) computed at the
 center of its patch. After RoPE, a projection of that ray is added to Q and K
-(K sees direction and moment swapped), and a frame-level residual is added to V.
-Nothing is appended to the token sequence.
+(K sees direction and moment swapped). An optional frame-level residual is
+added to V. Nothing is appended to the token sequence.
 
-All output projections start at zero, so step 0 matches the pretrained
+The Q/K output layers start at zero, so step 0 matches the pretrained
 attention. See SCoPE ``scope/encoding.py`` for the Normalize-Gate-Inject form.
+Defaults follow the released SCoPE recipe: a 7→64→dim MLP per projection,
+alpha = 1, ``plucker_eps = 1e-3``, a log-scale shift on the gate input during
+training, and no V residual. Translations are expected in near-depth units
+(``near_depth_json`` in the data config).
 
 This file is backbone-free: it works on ``[B, heads, txt+img, head_dim]``
 tensors. ``backbones/flux2.py`` decides where in a block it is called.
@@ -91,15 +95,28 @@ class _RMSNorm(nn.Module):
         return (x.float() * scale * self.weight).to(dtype=x.dtype)
 
 
-class SightlineCoordinatePE(nn.Module):
-    """Add scale-gated Plücker features to Q and K, and a per-frame residual to V."""
+def _projection(dim: int, hidden: int, bias: bool = False) -> nn.Sequential:
+    return nn.Sequential(nn.Linear(7, hidden, bias=bias), nn.GELU(), nn.Linear(hidden, dim, bias=False))
 
-    def __init__(self, dim: int, plucker_eps: float = 1e-6):
+
+class SightlineCoordinatePE(nn.Module):
+    """Add scale-gated Plücker features to Q and K, and optionally a per-frame residual to V."""
+
+    def __init__(
+        self,
+        dim: int,
+        mlp_hidden: int = 64,
+        plucker_eps: float = 1e-3,
+        cam_residual: bool = False,
+        log_scale_aug_prob: float = 0.3,
+        log_scale_aug_range: tuple[float, float] = (-1.2, 1.6),
+    ):
         super().__init__()
         self.plucker_eps = float(plucker_eps)
-        self.eq = nn.Linear(7, dim, bias=False)
-        self.ek = nn.Linear(7, dim, bias=False)
-        self.ev = nn.Linear(7, dim, bias=False)
+        self.log_scale_aug_prob = float(log_scale_aug_prob)
+        self.log_scale_aug_range = (float(log_scale_aug_range[0]), float(log_scale_aug_range[1]))
+        self.eq = _projection(dim, mlp_hidden)
+        self.ek = _projection(dim, mlp_hidden)
         self.norm_pe_q = _RMSNorm(dim)
         self.norm_pe_k = _RMSNorm(dim)
         hidden = max(dim // 4, 1)
@@ -111,17 +128,26 @@ class SightlineCoordinatePE(nn.Module):
         )
         self.alpha_q = nn.Parameter(torch.ones(1))
         self.alpha_k = nn.Parameter(torch.ones(1))
-        self.gate_proj = nn.Linear(7, dim, bias=False)
-        self.gate_logit = nn.Parameter(torch.full((dim,), -2.0))
-        self._zero_outputs()
+        self.cam_residual = cam_residual
+        if cam_residual:
+            self.ev = _projection(dim, mlp_hidden)
+            self.gate_proj = _projection(dim, mlp_hidden, bias=True)
+            self.gate_logit = nn.Parameter(torch.full((dim,), -2.0))
+        self._init_weights()
 
-    def _zero_outputs(self) -> None:
-        nn.init.zeros_(self.eq.weight)
-        nn.init.zeros_(self.ek.weight)
-        nn.init.zeros_(self.ev.weight)
-        nn.init.zeros_(self.gate_proj.weight)
+    def _init_weights(self) -> None:
+        # Zero only the output layer: zeroing both would leave GELU(0) = 0 and no gradient.
+        nn.init.kaiming_uniform_(self.eq[0].weight, a=5**0.5)
+        nn.init.zeros_(self.eq[2].weight)
+        self.ek.load_state_dict(self.eq.state_dict())  # tied init, then trained independently
         nn.init.zeros_(self.scale_gate[0].bias)
         nn.init.zeros_(self.scale_gate[2].bias)
+        if self.cam_residual:
+            nn.init.normal_(self.ev[0].weight, 0.0, 0.01)
+            nn.init.normal_(self.ev[2].weight, 0.0, 0.01)
+            nn.init.xavier_uniform_(self.gate_proj[0].weight)
+            nn.init.zeros_(self.gate_proj[0].bias)
+            nn.init.zeros_(self.gate_proj[2].weight)
 
     def decompose(self, plucker_6d: torch.Tensor):
         direction = plucker_6d[..., :3]
@@ -133,21 +159,34 @@ class SightlineCoordinatePE(nn.Module):
         feat_k = torch.cat((moment_hat, direction, log_scale), dim=-1)
         return feat_q, feat_k, log_scale
 
+    def _gate_log_scale(self, log_scale: torch.Tensor) -> torch.Tensor:
+        """In training, shift the gate's log-scale by one uniform draw per sample
+        (a global rescale of the translations). E_q / E_k keep the true value."""
+        if not self.training or self.log_scale_aug_prob <= 0.0:
+            return log_scale
+        if torch.rand(()).item() > self.log_scale_aug_prob:
+            return log_scale
+        low, high = self.log_scale_aug_range
+        shift = torch.empty(log_scale.shape[0], 1, 1, device=log_scale.device, dtype=log_scale.dtype)
+        return log_scale + shift.uniform_(low, high)
+
     def forward(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
         plucker_6d: torch.Tensor,
         num_frames: int,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """``q``/``k`` are ``[B, S, dim]`` image tokens. Returns ``(q, k, v_residual)``."""
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        """``q``/``k`` are ``[B, S, dim]`` image tokens. Returns ``(q, k, v_residual or None)``."""
         dtype = q.dtype
         feat_q, feat_k, log_scale = self.decompose(plucker_6d)
         feat_q = feat_q.to(dtype)
         feat_k = feat_k.to(dtype)
-        gate = self.scale_gate(log_scale.to(dtype))
+        gate = self.scale_gate(self._gate_log_scale(log_scale).to(dtype))
         pe_q = self.alpha_q * gate * self.norm_pe_q(self.eq(feat_q))
         pe_k = self.alpha_k * gate * self.norm_pe_k(self.ek(feat_k))
+        if not self.cam_residual:
+            return q + pe_q, k + pe_k, None
 
         batch, seq, channels = feat_q.shape
         spatial = seq // num_frames
@@ -184,5 +223,6 @@ def scope_qkv(
 
     q = torch.cat((q[:, :, :num_txt], split(q_img)), dim=2)
     k = torch.cat((k[:, :, :num_txt], split(k_img)), dim=2)
-    v = torch.cat((v[:, :, :num_txt], v[:, :, num_txt:] + split(cam)), dim=2)
+    if cam is not None:
+        v = torch.cat((v[:, :, :num_txt], v[:, :, num_txt:] + split(cam)), dim=2)
     return q, k, v

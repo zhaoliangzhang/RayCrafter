@@ -88,12 +88,37 @@ def make_dataloader(
     curriculum_progress=None,
     open_sequences: int = 4,
     repeat: bool = True,
+    data_format: str = "webdataset",
+    min_pixel_dropout: float = 0.0,
+    max_pixel_dropout: float = 1.0,
+    nvs_probability: float = 0.0,
+    nvs_ratio: float = 0.0,
+    near_depth_json: Optional[str] = None,
 ) -> DataLoader:
     """``shuffle=True`` (training): an endless mix whose bucket and noise level are
     drawn per sample from the curriculum at ``curriculum_progress`` (see
     :class:`CurriculumMixer`); targets are random frames of whole buffered sequences.
+    ``data_format="dl3dv_points"`` reads one split directory instead (2 refs + 3
+    point-splat queries) and applies the panorama pixel-dropout schedule.
     ``shuffle=False`` (validation / sampling): every frame of every sequence once, in
-    tar order, with deterministic refs; repeated if ``repeat``."""
+    tar order, with deterministic refs; repeated if ``repeat``. Point-splat
+    validation uses the stored prior, with no extra dropout."""
+    if data_format == "dl3dv_points":
+        from .dl3dv_points import make_points_dataloader
+
+        # Validation / sampling should see the stored splat, not a fresh dropout.
+        if not shuffle:
+            min_pixel_dropout = max_pixel_dropout = 0.0
+            nvs_probability = nvs_ratio = 0.0
+        return make_points_dataloader(
+            shards, num_views=num_views, ref_size=ref_size, image_size=image_size,
+            batch_size=batch_size, num_workers=num_workers, use_pose=use_pose,
+            shuffle=shuffle, min_pixel_dropout=min_pixel_dropout,
+            max_pixel_dropout=max_pixel_dropout, nvs_probability=nvs_probability,
+            nvs_ratio=nvs_ratio, near_depth_json=near_depth_json,
+        )
+    if data_format != "webdataset":
+        raise ValueError(f"data_format must be webdataset or dl3dv_points, got {data_format!r}")
     h, w = int(image_size[0]), int(image_size[1])
     urls = expand_shards(shards)
     if not urls:
