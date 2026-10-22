@@ -226,7 +226,10 @@ def _attention(block: nn.Module, q, k, v, pe, num_txt: int, depth_tokens: Option
     if rope_type == "prope":
         return prope_attention(q, k, v, q_rope, k_rope, num_txt, ctx["geom"], q_extra, k_extra)
     depth = getattr(block, DEPTH_HEADS[rope_type])(depth_tokens)
-    return DEPTH_ATTENTION[rope_type](q, k, v, q_rope, k_rope, num_txt, depth, ctx["geom"], q_extra, k_extra)
+    return DEPTH_ATTENTION[rope_type](
+        q, k, v, q_rope, k_rope, num_txt, depth, ctx["geom"], q_extra, k_extra,
+        apply_vo=block._camera_host._rope_apply_vo,
+    )
 
 
 # The depth head reads the normalized, modulated tokens that feed the QKV
@@ -255,12 +258,13 @@ def _single_forward(self, x, pe, mod, num_txt_tokens, num_ref_tokens):
     return self._out(x, attn, mlp, mod_gate), {}
 
 
-def install_camera_attention(transformer: Flux2, scope: bool, rope_type: str) -> None:
+def install_camera_attention(transformer: Flux2, scope: bool, rope_type: str, apply_vo: bool = False) -> None:
     """Add camera modules to every block and patch its attention.
 
     ``rope_type`` is ``flux`` (backbone RoPE only), ``rayrope``, ``prope`` (no
     parameters), ``unirope`` or ``unirope_anchor``. Module names (``scope_pe`` and the
-    ``DEPTH_HEADS`` values) are checkpoint keys.
+    ``DEPTH_HEADS`` values) are checkpoint keys. ``apply_vo`` makes RayRoPE /
+    UniRoPE also rotate V and the attention output.
     """
     if not scope and rope_type == "flux":
         return
@@ -270,6 +274,7 @@ def install_camera_attention(transformer: Flux2, scope: bool, rope_type: str) ->
         raise RuntimeError(f"{rope_type} needs 128-d heads, got {hidden // transformer.num_heads}")
     transformer._camera = None
     transformer._rope_type = rope_type
+    transformer._rope_apply_vo = apply_vo
 
     def bind(block: nn.Module, forward) -> None:
         # object.__setattr__: a normal assignment would register the transformer

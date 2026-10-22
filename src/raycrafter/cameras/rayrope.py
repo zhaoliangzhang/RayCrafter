@@ -6,7 +6,10 @@ whole head on image tokens, with no backbone RoPE axis kept. Its 12
 coordinates need 24 channels per frequency: 5 frequencies (adjacent periods ×3,
 as in the reference) rotate 120 channels and the last 8 pass through.
 
-Q and K of image tokens are rotated; V is not. Each camera is a query in turn:
+Q and K of image tokens are rotated. With ``apply_vo`` (the reference RayRoPE
+default, Eq. 6 of the paper), V is rotated like K and the attention output like
+Q in reverse, so each aggregated value is moved by the relative rotation from
+its key to the query. Each camera is a query in turn:
 every image token is re-expressed in that query camera, then that camera's
 queries attend to all tokens. Text keeps the backbone RoPE.
 
@@ -42,6 +45,13 @@ MAX_D_F = 10.0
 FREQ_BASE = 3.0
 
 _OFFSETS = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
+
+# The compiled geometry and rotation (here and in unirope.py) see 2, 3 and 5
+# cameras on FLUX 3, with and without grad, and run again on the autograd
+# thread when gradient checkpointing recomputes a block. Dynamo guards on the
+# thread count, which differs there, so that is a variant of its own. Above the
+# default limit of 8, new variants silently fall back to eager.
+torch._dynamo.config.recompile_limit = max(torch._dynamo.config.recompile_limit, 64)
 
 
 class DepthHead(nn.Module):
@@ -304,17 +314,32 @@ def _coefficients(
     return cos_q, sin_q, torch.stack(cos_k), torch.stack(sin_k)
 
 
-def _rotate(feats: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    """Split-half rotation of the first ``2 * cos.shape[-1]`` of the 96 camera
-    channels (all of them for RayRoPE); the rest pass through. ``feats`` is
-    ``[B, H, S, 96]``, ``cos`` / ``sin`` ``[B, S, half]``."""
+def _rotate(feats: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, inverse: bool = False) -> torch.Tensor:
+    """Split-half rotation of the first ``2 * cos.shape[-1]`` camera channels; the
+    rest pass through. ``feats`` is ``[B, H, S, C]``, ``cos`` / ``sin``
+    ``[B, S, half]``. Q, K and V take this rotation; ``inverse=True`` undoes it
+    (the attention output under ``apply_vo``)."""
     half = cos.shape[-1]
     x1, x2, rest = feats[..., :half], feats[..., half : 2 * half], feats[..., 2 * half :]
     cos = cos[:, None].to(dtype=feats.dtype)
     sin = sin[:, None].to(dtype=feats.dtype)
+    if inverse:
+        sin = -sin
     rotated_1 = x1 * cos + x2 * sin
     rotated_2 = -x1 * sin + x2 * cos
     return torch.cat((rotated_1, rotated_2, rest), dim=-1)
+
+
+@torch.compile
+def _rotate_vo(
+    feats: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, rope_axis: Optional[int], inverse: bool
+) -> torch.Tensor:
+    """Rotate the camera channels of V (or undo it on the output); the kept
+    backbone-RoPE channels pass through, as the backbone never rotates V."""
+    if rope_axis is None:
+        return _rotate(feats, cos, sin, inverse)
+    kept, camera_channels = split_channels(feats, rope_axis)
+    return merge_channels(kept, _rotate(camera_channels, cos, sin, inverse), rope_axis)
 
 
 @torch.compile
@@ -369,6 +394,7 @@ def rayrope_attention(
     q_extra: Optional[torch.Tensor] = None,
     k_extra: Optional[torch.Tensor] = None,
     rope_axis: int = 0,
+    apply_vo: bool = False,
 ) -> torch.Tensor:
     """Full attention with per-camera RayRoPE on image queries.
 
@@ -378,7 +404,8 @@ def rayrope_attention(
     from a :class:`DepthHead`. ``q_extra`` / ``k_extra`` (e.g. SCoPE) are
     added after the ray rotation and must be zero on text. ``rope_axis`` is
     accepted for the shared call signature and unused: RayRoPE replaces the
-    whole head on image tokens.
+    whole head on image tokens. ``apply_vo`` also rotates V and the output
+    (see the module docstring).
 
     Returns ``[B, txt+img, heads*HEAD_DIM]``.
     """
@@ -406,7 +433,7 @@ def rayrope_attention(
         )
     return per_camera_attention(
         q_content, k_content, v, q_rope, k_rope, num_txt, cos_q, sin_q, cos_k, sin_k,
-        num_patches, q_extra, k_extra, rope_axis=None,
+        num_patches, q_extra, k_extra, rope_axis=None, apply_vo=apply_vo,
     )
 
 
@@ -425,13 +452,16 @@ def per_camera_attention(
     q_extra: Optional[torch.Tensor] = None,
     k_extra: Optional[torch.Tensor] = None,
     rope_axis: Optional[int] = 0,
+    apply_vo: bool = False,
 ) -> torch.Tensor:
     """Each camera's queries attend to all tokens rotated into that camera's frame.
 
     ``cos_q`` / ``sin_q`` ``[B, img, half]`` place every image token in its own
     camera; ``cos_k`` / ``sin_k`` ``[C, B, img, half]`` place all image tokens in
     query camera ``c``. ``rope_axis`` is the backbone RoPE axis kept, or ``None``
-    when the coefficients cover the whole head. Shared by RayRoPE and UniRoPE.
+    when the coefficients cover the whole head. With ``apply_vo``, image values
+    take the key rotation and each camera's output the inverse query rotation.
+    Shared by RayRoPE and UniRoPE.
     """
     from einops import rearrange
 
@@ -446,6 +476,7 @@ def per_camera_attention(
     q_img_rope = q_rope[:, :, num_txt:]
     k_img_rope = k_rope[:, :, num_txt:]
     k_txt = k_rope[:, :, :num_txt]
+    v_txt, v_img = v[:, :, :num_txt], v[:, :, num_txt:]
     q_img = _mix(q_img_rope, q_img_content, cos_q, sin_q, rope_axis)
     if q_extra is not None:
         q_img = q_img + q_extra[:, :, num_txt:]
@@ -457,8 +488,15 @@ def per_camera_attention(
         if k_extra is not None:
             k_img = k_img + k_extra[:, :, num_txt:]
         k_all = torch.cat((k_txt, k_img), dim=2) if num_txt else k_img
+        v_all = v
+        if apply_vo:
+            v_cam = _rotate_vo(v_img, cos_k[camera_index], sin_k[camera_index], rope_axis, False)
+            v_all = torch.cat((v_txt, v_cam), dim=2) if num_txt else v_cam
         q_i = q_img[:, :, start:end]
-        image_outs.append(F.scaled_dot_product_attention(q_i, k_all, v, is_causal=False))
+        out_i = F.scaled_dot_product_attention(q_i, k_all, v_all, is_causal=False)
+        if apply_vo:
+            out_i = _rotate_vo(out_i, cos_q[:, start:end], sin_q[:, start:end], rope_axis, True)
+        image_outs.append(out_i)
 
     outputs.append(torch.cat(image_outs, dim=2))
     out = torch.cat(outputs, dim=2)

@@ -34,6 +34,9 @@ class Config:
     # ── Camera conditioning ────────────────────────────────────────────────
     camera_condition: str = "scope"   # "none" | "scope"
     rope_type: str = "rayrope"        # "flux" | "rayrope" | "prope" | "unirope" | "unirope_anchor"
+    # RayRoPE / UniRoPE: also rotate V and the attention output (the RayRoPE
+    # paper's default). Off by default so older checkpoints evaluate as trained.
+    rope_apply_vo: bool = False
 
     # ── Training ───────────────────────────────────────────────────────────
     batch_size: int = 1
@@ -48,7 +51,7 @@ class Config:
     t_max: float = 1.0
     t_one_prob: float = 0.5
     mixed_precision: str = "bf16"     # "bf16" | "fp32"
-    lpips_loss_weight: float = 10.0
+    lpips_loss_weight: float = 5.0
     l1_pixel_loss_weight: float = 1.0
     pixel_loss_latent_crop: Optional[int] = None
     pixel_loss_t_weighting: str = "none"   # "none" | "one_minus_t" | "one_minus_t_noise"
@@ -91,7 +94,9 @@ class Config:
     output_dir: str = "outputs/run"
     log_interval: int = 250
     val_interval: int = 500
-    save_interval: int = 5000
+    save_interval: int = 20000
+    # One overwritten full state (fp32 weights + AdamW) so a killed job can resume.
+    resume_interval: int = 2000
     use_wandb: bool = False
     wandb_project: str = "raycrafter"
     wandb_run_name: str = ""
@@ -144,6 +149,11 @@ class Config:
             raise ValueError(f"nvs_ratio must be in [0, 1], got {self.nvs_ratio}")
         if float(self.nvs_probability) > 0.0 and float(self.nvs_ratio) > 0.0:
             raise ValueError("nvs_probability (per sample) and nvs_ratio (per query) cannot both be set")
+        if int(self.save_interval) <= 0 or int(self.resume_interval) <= 0:
+            raise ValueError(
+                "save_interval and resume_interval must be positive, "
+                f"got {self.save_interval} and {self.resume_interval}"
+            )
         if self.data_format == "dl3dv_points" and (self.num_views != 3 or self.ref_size != 2):
             raise ValueError(
                 "dl3dv_points samples are 2 reference images and 3 target views; "

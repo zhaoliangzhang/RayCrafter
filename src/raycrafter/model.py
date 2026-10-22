@@ -52,7 +52,7 @@ class RayCrafterModel(nn.Module):
 
         # Added after freeze_base_model, so camera modules always train.
         backbone.install_camera_attention(
-            self.transformer, scope=cfg.uses_scope, rope_type=cfg.rope_type
+            self.transformer, scope=cfg.uses_scope, rope_type=cfg.rope_type, apply_vo=cfg.rope_apply_vo
         )
         print(f"camera_condition={cfg.camera_condition}  rope_type={cfg.rope_type}")
 

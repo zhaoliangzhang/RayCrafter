@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 import sys
@@ -26,6 +27,9 @@ from torch.optim import AdamW
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
+from raycrafter.checkpoint import (
+    finalize_resume_dir, load_training_state, save_training_state, validate_resume_meta,
+)
 from raycrafter.config import Config
 from raycrafter.data import make_dataloader
 from raycrafter.data.curriculum import make_progress_holder
@@ -73,12 +77,27 @@ def train(config: str) -> None:
     cfg = Config.from_yaml(config)
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    resume_dir = out_dir / "resume"
+    if is_main:
+        finalize_resume_dir(resume_dir)
+    if world_size > 1:
+        dist.barrier()
+    has_resume = (resume_dir / "meta.json").is_file()
+    if has_resume:
+        # The rolling checkpoint has weights, AdamW and the step. A bf16
+        # resume_from would just be overwritten, and its optimizer would be cold.
+        resume_meta = json.loads((resume_dir / "meta.json").read_text())
+        validate_resume_meta(resume_meta, world_size, world_size > 1 and cfg.shard_optimizer)
+        cfg.resume_from = None
+        cfg.start_step = int(resume_meta["step"])
     use_wandb = cfg.use_wandb and wandb is not None
     if is_main:
         cfg.save_yaml(out_dir / "config.yaml")
         print(f"variant={cfg.model_variant} lora={cfg.use_lora} views={cfg.num_views} refs={cfg.ref_size} "
               f"camera_condition={cfg.camera_condition} rope={cfg.rope_type} "
               f"steps={cfg.start_step}..{cfg.max_steps}")
+        if has_resume:
+            print(f"Resuming full state (weights + AdamW) from {resume_dir} at step {cfg.start_step}")
         if cfg.use_wandb and wandb is None:
             print("use_wandb=true but wandb is not importable; logging to stdout only")
         if use_wandb:
@@ -108,6 +127,19 @@ def train(config: str) -> None:
         optimizer = ZeroRedundancyOptimizer(train_params, optimizer_class=AdamW, fused=True, **adamw)
     else:
         optimizer = AdamW(train_params, **adamw)
+    if has_resume:
+        load_training_state(xfm, optimizer, resume_dir, rank, world_size)
+
+    saved_resume_at = -1
+
+    def save_resume(at_step: int, force: bool = False) -> None:
+        nonlocal saved_resume_at
+        if at_step <= 0 or saved_resume_at == at_step:
+            return
+        if not force and at_step % cfg.resume_interval != 0:
+            return
+        save_training_state(xfm, optimizer, at_step, resume_dir, rank, world_size)
+        saved_resume_at = at_step
 
     progress = (make_progress_holder(_progress(cfg, cfg.start_step))
                 if (cfg.enable_curriculum or cfg.noise_levels) else None)
@@ -194,6 +226,8 @@ def train(config: str) -> None:
 
         if is_main and step % cfg.save_interval == 0:
             save_checkpoint(xfm, str(out_dir / f"transformer_step{step}.safetensors"), cfg.use_lora)
+        # All ranks: one overwritten resume/ with fp32 weights and this rank's AdamW shard.
+        save_resume(step)
 
         if world_size > 1:
             dist.barrier()
@@ -206,8 +240,10 @@ def train(config: str) -> None:
             if stop.item():
                 if is_main:
                     print(f"time_limit_hours={cfg.time_limit_hours} reached at step {step}", flush=True)
+                save_resume(step, force=True)
                 break
 
+    save_resume(step, force=True)
     if is_main:
         save_checkpoint(xfm, str(out_dir / "transformer_final.safetensors"), cfg.use_lora)
         print(f"Done at step {step}. Weights → {out_dir}")
