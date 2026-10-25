@@ -73,6 +73,8 @@ def main(
             break
         src, tgt, ref = (batch[k].to(device) for k in ("src", "tgt", "ref"))
         cams = {k: batch[k].to(device) for k in ("camera_c2w", "camera_fxfycxcy") if k in batch}
+        if cams:
+            cams["camera_model"] = batch.get("camera_model", "pinhole")
         alpha = torch.full((src.shape[0],), 1.0 if mode == "nvs" else 0.0)
         pred = model.sample(src, ref, num_steps=num_steps, noise_alpha=alpha, **cams)
         h, w = pred.shape[-2:]

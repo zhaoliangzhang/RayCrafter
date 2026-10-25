@@ -22,6 +22,27 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
+from .unirope import equirect_directions
+
+
+def _pinhole_directions(fxfycxcy, cropped_h, cropped_w, top, left, latent_hw, device) -> torch.Tensor:
+    """Camera-frame unit rays through the token centers, ``[B, N, h, w, 3]``."""
+    patches_y, patches_x = latent_hw
+    fx = fxfycxcy[..., 0].float()
+    fy = fxfycxcy[..., 1].float()
+    cx = fxfycxcy[..., 2].float() - left
+    cy = fxfycxcy[..., 3].float() - top
+
+    ys = (torch.arange(patches_y, device=device) + 0.5) * (cropped_h / patches_y)
+    xs = (torch.arange(patches_x, device=device) + 0.5) * (cropped_w / patches_x)
+    grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+
+    # [B, N, h, w]
+    x = (grid_x - cx[:, :, None, None]) / fx[:, :, None, None]
+    y = (grid_y - cy[:, :, None, None]) / fy[:, :, None, None]
+    directions = torch.stack((x, y, torch.ones_like(x)), dim=-1)
+    return F.normalize(directions, dim=-1, eps=1e-8)
+
 
 def plucker_tokens(
     c2w: torch.Tensor,
@@ -29,6 +50,7 @@ def plucker_tokens(
     image_hw: tuple[int, int],
     latent_hw: tuple[int, int],
     patch: int = 16,
+    camera_model: str = "pinhole",
 ) -> torch.Tensor:
     """One Plücker ray per packed image token.
 
@@ -39,9 +61,13 @@ def plucker_tokens(
 
     Args:
         c2w: ``[B, N, 4, 4]`` camera-to-world (OpenCV convention).
-        fxfycxcy: ``[B, N, 4]`` pinhole intrinsics in pixels of the full image.
+        fxfycxcy: ``[B, N, 4]`` pinhole intrinsics in pixels of the full image
+            (unused for ``equirect``).
         image_hw: ``(H, W)`` of the image given to the VAE.
         latent_hw: ``(h, w)`` token grid, one token per ``patch × patch`` pixels.
+        camera_model: ``pinhole`` (released SCoPE) or ``equirect``: the ray
+            through each token center of a full panorama (``cameras.unirope``
+            convention).
 
     Returns:
         ``[B, N*h*w, 6]`` as ``(direction, moment)``.
@@ -55,21 +81,17 @@ def plucker_tokens(
     c2w = c2w.float()
     relative = torch.linalg.inv(c2w[:, :1]) @ c2w
 
-    fx = fxfycxcy[..., 0].float()
-    fy = fxfycxcy[..., 1].float()
-    cx = fxfycxcy[..., 2].float() - left
-    cy = fxfycxcy[..., 3].float() - top
-
     device = c2w.device
-    ys = (torch.arange(patches_y, device=device) + 0.5) * (cropped_h / patches_y)
-    xs = (torch.arange(patches_x, device=device) + 0.5) * (cropped_w / patches_x)
-    grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
-
-    # [B, N, h, w]
-    x = (grid_x - cx[:, :, None, None]) / fx[:, :, None, None]
-    y = (grid_y - cy[:, :, None, None]) / fy[:, :, None, None]
-    directions = torch.stack((x, y, torch.ones_like(x)), dim=-1)
-    directions = F.normalize(directions, dim=-1, eps=1e-8)
+    if camera_model == "equirect":
+        if (cropped_h, cropped_w) != (height, width):
+            raise ValueError(f"equirect image {height}x{width} is not a whole number of {patch}px patches")
+        batch, cameras = c2w.shape[:2]
+        directions = equirect_directions(batch, cameras, latent_hw, device)
+        directions = directions.reshape(batch, cameras, patches_y, patches_x, 3)
+    elif camera_model == "pinhole":
+        directions = _pinhole_directions(fxfycxcy, cropped_h, cropped_w, top, left, latent_hw, device)
+    else:
+        raise ValueError(f"unknown camera_model {camera_model!r}")
 
     rotation = relative[:, :, :3, :3]
     directions = torch.einsum("bnij,bnhwj->bnhwi", rotation, directions)

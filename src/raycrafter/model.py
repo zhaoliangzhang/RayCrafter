@@ -60,8 +60,11 @@ class RayCrafterModel(nn.Module):
             if cfg.use_lora:
                 load_trainable_weights(self.transformer, cfg.resume_from)
             else:
-                sd = load_sft(cfg.resume_from, device=str(device))
-                self.transformer.load_state_dict(sd, strict=True, assign=True)
+                # Read on the host and copy into the loaded weights: the GPU never
+                # holds two copies of the transformer (22 GB would not fit a 24 GB card).
+                sd = load_sft(cfg.resume_from, device="cpu")
+                self.transformer.load_state_dict(sd, strict=True)
+                del sd
             print(f"Resumed from {cfg.resume_from}")
 
         if cfg.gradient_checkpointing:
@@ -143,7 +146,7 @@ class RayCrafterModel(nn.Module):
         mixed = (1.0 - a) * base + a * eps
         return torch.where(a > 0, mixed, z_src.float()).to(z_src.dtype)
 
-    def _prepare(self, src_imgs, ref_imgs, c2w, fxfycxcy, noise_alpha, tgt_imgs):
+    def _prepare(self, src_imgs, ref_imgs, c2w, fxfycxcy, noise_alpha, tgt_imgs, camera_model="pinhole"):
         """Shared by training and sampling: sort refs, encode, build ref tokens + camera context."""
         B, V = src_imgs.shape[:2]
         R = ref_imgs.shape[1]
@@ -162,7 +165,8 @@ class RayCrafterModel(nn.Module):
         cams = None
         if self.cfg.needs_cameras:
             cams = self.backbone.camera_inputs(
-                c2w, fxfycxcy, (H, W), (h, w), self.cfg.uses_scope, self.cfg.rope_type
+                c2w, fxfycxcy, (H, W), (h, w), self.cfg.uses_scope, self.cfg.rope_type,
+                footprint=self.cfg.unirope_footprint, camera_model=camera_model,
             )
         return z_src, z_tgt, x_ref.to(self._dtype), ref_ids.to(src_imgs.device), cams, (h, w)
 
@@ -188,12 +192,13 @@ class RayCrafterModel(nn.Module):
         camera_c2w: Optional[torch.Tensor] = None,       # (B, R+V, 4, 4)
         camera_fxfycxcy: Optional[torch.Tensor] = None,  # (B, R+V, 4) pixels
         noise_alpha: Optional[torch.Tensor] = None,      # (B,)
+        camera_model: str = "pinhole",                   # one per batch: pinhole | equirect
     ) -> Dict[str, torch.Tensor]:
         B, V = src_imgs.shape[:2]
         device = src_imgs.device
         with torch.no_grad():
             z_src, z_tgt, x_ref, ref_ids, cams, (h, w) = self._prepare(
-                src_imgs, ref_imgs, camera_c2w, camera_fxfycxcy, noise_alpha, tgt_imgs
+                src_imgs, ref_imgs, camera_c2w, camera_fxfycxcy, noise_alpha, tgt_imgs, camera_model
             )
 
         cfg = self.cfg
@@ -275,6 +280,7 @@ class RayCrafterModel(nn.Module):
         camera_fxfycxcy: Optional[torch.Tensor] = None,
         noise_alpha: Optional[torch.Tensor] = None,
         tgt_imgs: Optional[torch.Tensor] = None,
+        camera_model: str = "pinhole",
     ) -> torch.Tensor:
         """Euler from t=1 to t=0. Returns ``(B, V, 3, H', W')`` in [-1, 1].
 
@@ -285,7 +291,7 @@ class RayCrafterModel(nn.Module):
         B, V = src_imgs.shape[:2]
         device = src_imgs.device
         z_src, _, x_ref, ref_ids, cams, (h, w) = self._prepare(
-            src_imgs, ref_imgs, camera_c2w, camera_fxfycxcy, noise_alpha, tgt_imgs
+            src_imgs, ref_imgs, camera_c2w, camera_fxfycxcy, noise_alpha, tgt_imgs, camera_model
         )
         x, view_ids = self.backbone.pack_views(z_src)
         x, view_ids = x.to(self._dtype), view_ids.to(device)

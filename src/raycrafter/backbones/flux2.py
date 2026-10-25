@@ -175,16 +175,27 @@ def camera_inputs(
     latent_hw: Tuple[int, int],
     scope: bool,
     rope_type: str,
+    footprint: bool = False,
+    camera_model: str = "pinhole",
 ) -> dict:
-    """Per-forward camera tensors, shared by every block."""
+    """Per-forward camera tensors, shared by every block. ``footprint`` gives
+    UniRoPE the patch corner rays too. ``camera_model`` (one per batch) is
+    ``pinhole`` or ``equirect``; every camera encoding but PRoPE takes both."""
+    unirope = lambda *args: prepare_unirope(*args, footprint=footprint, camera_model=camera_model)  # noqa: E731
+    rayrope = lambda *args: prepare_geometry(*args, camera_model=camera_model)  # noqa: E731
     geometry = {
-        "flux": None, "rayrope": prepare_geometry, "prope": prepare_geometry,
-        "unirope": prepare_unirope, "unirope_anchor": prepare_unirope,
+        "flux": None, "rayrope": rayrope, "prope": prepare_geometry,
+        "unirope": unirope, "unirope_anchor": unirope,
     }
+    if camera_model != "pinhole" and rope_type == "prope":
+        raise NotImplementedError(f"rope_type {rope_type!r} is pinhole only, got camera_model {camera_model!r}")
     with torch.no_grad():
         prepare = geometry[rope_type]
         return {
-            "plucker": plucker_tokens(c2w, fxfycxcy, image_hw, latent_hw, PATCH) if scope else None,
+            "plucker": (
+                plucker_tokens(c2w, fxfycxcy, image_hw, latent_hw, PATCH, camera_model=camera_model)
+                if scope else None
+            ),
             "geom": prepare(c2w, fxfycxcy, image_hw, latent_hw) if prepare else None,
             "num_frames": int(c2w.shape[1]),
         }

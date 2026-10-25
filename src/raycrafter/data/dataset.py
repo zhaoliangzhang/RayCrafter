@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import io
 import json
-from typing import Any, Dict, List, Optional, Tuple, Union
+import random
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import braceexpand
 import torch
@@ -192,6 +193,31 @@ def make_dataloader(
     return DataLoader(ds, batch_size=batch_size, num_workers=num_workers, pin_memory=True, collate_fn=_collate)
 
 
+class MixedLoader:
+    """Endless batches drawn from several loaders: each batch comes from loader
+    ``i`` with probability ``weights[i]``, so a batch never mixes sources (e.g.
+    camera models). Exhausted loaders restart."""
+
+    def __init__(self, loaders: Sequence, weights: Sequence[float], seed: int = 0):
+        if len(loaders) != len(weights) or not loaders:
+            raise ValueError("MixedLoader needs one weight per loader")
+        self.loaders = list(loaders)
+        self.weights = [float(w) for w in weights]
+        self.seed = seed
+
+    def __iter__(self):
+        rng = random.Random(self.seed)
+        iters = [iter(loader) for loader in self.loaders]
+        indices = range(len(self.loaders))
+        while True:
+            i = rng.choices(indices, weights=self.weights)[0]
+            try:
+                yield next(iters[i])
+            except StopIteration:
+                iters[i] = iter(self.loaders[i])
+                yield next(iters[i])
+
+
 def _collate(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
     out = {k: torch.stack([b[k] for b in batch]) for k in ("src", "tgt", "ref")}
     if "camera_c2w" in batch[0]:
@@ -199,4 +225,9 @@ def _collate(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         out["camera_fxfycxcy"] = torch.stack([b["camera_fxfycxcy"] for b in batch])
     out["noise_alpha"] = torch.tensor([b["noise_alpha"] for b in batch])
     out["key"] = [b["key"] for b in batch]
+    if "camera_model" in batch[0]:
+        models = {b["camera_model"] for b in batch}
+        if len(models) != 1:
+            raise ValueError(f"one camera model per batch, got {sorted(models)}")
+        out["camera_model"] = models.pop()
     return out

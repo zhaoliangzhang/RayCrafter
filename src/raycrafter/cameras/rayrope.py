@@ -17,6 +17,13 @@ As in the reference RayRoPE, poses are normalized so camera 0 is the identity
 and camera 1 is at unit distance; the frequency ranges and depth clamps below
 assume that scale.
 
+Camera models (``camera_model``, one per batch): ``pinhole`` is the reference
+RayRoPE. ``equirect`` panoramas have no intrinsics (K = I): keys are
+back-projected along the panorama's pixel rays (``cameras.unirope``
+convention) at the predicted distance, and the query side keeps the reference
+projection (unit direction xy and z / w in the query camera), except that z
+keeps its sign, since half of a panorama lies behind any camera.
+
 This file is backbone-free: it works on ``[B, heads, txt+img, head_dim]``
 tensors. ``backbones/flux2.py`` and ``backbones/flux3.py`` wire it into FLUX
 blocks; ``cameras/prope.py`` shares the geometry and the channel helpers for
@@ -45,6 +52,7 @@ MAX_D_F = 10.0
 FREQ_BASE = 3.0
 
 _OFFSETS = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
+CAMERA_MODELS = ("pinhole", "equirect")
 
 # The compiled geometry and rotation (here and in unirope.py) see 2, 3 and 5
 # cameras on FLUX 3, with and without grad, and run again on the autograd
@@ -145,14 +153,17 @@ def prepare_geometry(
     fxfycxcy: torch.Tensor,
     image_hw: tuple[int, int],
     latent_hw: tuple[int, int],
+    camera_model: str = "pinhole",
 ) -> dict:
     """Camera matrices shared by every block. Poses are relative to camera 0.
 
     Cameras are ordered ``[ref..., views...]``, the same order as packed tokens.
     Translations are scaled so camera 1 is at unit distance from camera 0
     (RayRoPE's ``_normalize_poses_identity_unit_distance``); a pair closer than
-    1e-2 is left unscaled.
+    1e-2 is left unscaled. ``equirect`` cameras ignore ``fxfycxcy`` (K = I).
     """
+    if camera_model not in CAMERA_MODELS:
+        raise ValueError(f"camera_model must be one of {CAMERA_MODELS}, got {camera_model!r}")
     c2w = c2w.float()
     relative = torch.linalg.inv(c2w[:, :1]) @ c2w
     if relative.shape[1] > 1:
@@ -161,9 +172,12 @@ def prepare_geometry(
         relative = relative.clone()
         relative[:, :, :3, 3] /= scale[:, None, None]
     w2c = _invert_se3(relative)
-    k_norm = _normalize_k(_intrinsics(fxfycxcy.float()), image_hw)
-    projection = torch.matmul(_lift_k(k_norm), w2c)
-    projection_inv = torch.matmul(relative, _lift_k(_invert_k(k_norm)))
+    if camera_model == "equirect":
+        projection, projection_inv = w2c, relative
+    else:
+        k_norm = _normalize_k(_intrinsics(fxfycxcy.float()), image_hw)
+        projection = torch.matmul(_lift_k(k_norm), w2c)
+        projection_inv = torch.matmul(relative, _lift_k(_invert_k(k_norm)))
     patches_y, patches_x = latent_hw
     return {
         "c2w": relative,
@@ -173,6 +187,7 @@ def prepare_geometry(
         "patches_y": int(patches_y),
         "patches_x": int(patches_x),
         "num_cameras": int(c2w.shape[1]),
+        "camera_model": camera_model,
     }
 
 
@@ -187,6 +202,26 @@ def _patch_uv(patches_x: int, patches_y: int, device: torch.device) -> torch.Ten
         v = (grid_y + oy) / patches_y - 0.5
         corners.append(torch.stack((u, v), dim=-1).reshape(-1, 2))
     return torch.stack(corners, dim=1)  # (patches, rays, 2)
+
+
+def _pixel_rays(patches_x: int, patches_y: int, camera_model: str, device: torch.device) -> torch.Tensor:
+    """``(patches, rays, 3)`` at the patch corners of ``_OFFSETS``, in the frame
+    ``projection_inv`` maps from: ``[u, v, 1]`` (normalized image coordinates)
+    for pinhole, unit camera rays for equirect (longitude -π..π left to right,
+    latitude π/2..-π/2 top to bottom, OpenCV axes)."""
+    if camera_model == "pinhole":
+        uv = _patch_uv(patches_x, patches_y, device)
+        return torch.cat((uv, torch.ones_like(uv[..., :1])), dim=-1)
+    columns = torch.arange(patches_x, device=device, dtype=torch.float32)
+    rows = torch.arange(patches_y, device=device, dtype=torch.float32)
+    grid_x, grid_y = torch.meshgrid(columns, rows, indexing="xy")
+    rays = []
+    for ox, oy in _OFFSETS:
+        lon = ((grid_x + ox) / patches_x * 2.0 - 1.0) * math.pi
+        lat = (0.5 - (grid_y + oy) / patches_y) * math.pi
+        ray = torch.stack((torch.cos(lat) * torch.sin(lon), -torch.sin(lat), torch.cos(lat) * torch.cos(lon)), dim=-1)
+        rays.append(ray.reshape(-1, 3))
+    return torch.stack(rays, dim=1)
 
 
 def depth_interval(raw: torch.Tensor) -> torch.Tensor:
@@ -204,13 +239,13 @@ def _depths(raw: torch.Tensor, num_cameras: int, num_patches: int) -> torch.Tens
     return depths.unsqueeze(-1).unsqueeze(-1).expand(-1, -1, -1, -1, len(_OFFSETS), 1)
 
 
-def _world_points(projection_inv: torch.Tensor, uv: torch.Tensor, depths: torch.Tensor) -> torch.Tensor:
-    """Back-project ``[u, v, 1, 1/d]`` with ``P^{-1}``. ``depths`` is ``[2, B, C, P, R, 1]``."""
+def _world_points(projection_inv: torch.Tensor, rays: torch.Tensor, depths: torch.Tensor) -> torch.Tensor:
+    """Back-project ``[ray, 1/d]`` with ``P^{-1}`` (``ray`` from :func:`_pixel_rays`:
+    ``[u, v, 1]`` for pinhole). ``depths`` is ``[2, B, C, P, R, 1]``."""
     disparity = 1.0 / depths
-    ones = torch.ones_like(disparity)
-    uv = uv.to(device=depths.device, dtype=depths.dtype)
-    uv = uv.view(1, 1, 1, *uv.shape).expand(2, depths.shape[1], depths.shape[2], -1, -1, -1)
-    homogeneous = torch.cat((uv, ones, disparity), dim=-1)
+    rays = rays.to(device=depths.device, dtype=depths.dtype)
+    rays = rays.view(1, 1, 1, *rays.shape).expand(2, depths.shape[1], depths.shape[2], -1, -1, -1)
+    homogeneous = torch.cat((rays, disparity), dim=-1)
     return torch.einsum("bcij,ebcprj->ebcpri", projection_inv, homogeneous)
 
 
@@ -220,8 +255,11 @@ def _query_positions(
     projection: torch.Tensor,
     world: torch.Tensor,
     camera_index: int,
+    signed_depth: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Points of every camera, expressed in camera ``camera_index``.
+
+    Depth is the reference ``|z| / w``, or ``z / w`` with ``signed_depth``.
 
     ``world`` is ``[2, B, C, P, R, 4]`` from :func:`_world_points`. Returns
     centers ``[B, C, P, 3]`` and rays ``[2, B, C, P, 9]`` (3 rays × dir xy and
@@ -237,8 +275,11 @@ def _query_positions(
     centers_q = centers_q[..., :3] / centers_q[..., 3:].clamp(min=1e-4)
 
     projected = torch.einsum("bij,ebcprj->ebcpri", projection_q, world)
-    # sqrt(z^2 + eps) rather than |z|: smooth gradient at z = 0.
-    z = torch.sqrt(projected[..., 2:3].pow(2) + 1e-9).clamp(min=1e-4)
+    if signed_depth:
+        z = projected[..., 2:3]
+    else:
+        # sqrt(z^2 + eps) rather than |z|: smooth gradient at z = 0.
+        z = torch.sqrt(projected[..., 2:3].pow(2) + 1e-9).clamp(min=1e-4)
     homogeneous_w = projected[..., 3:4].clamp(min=1e-4)
     direction = projected[..., :3] / (projected[..., :3].norm(dim=-1, keepdim=True) + 1e-6)
     depth = (z / homogeneous_w).clamp(min=-MAX_D_F, max=MAX_D_F)
@@ -282,6 +323,7 @@ def _coefficients(
     raw_depth: torch.Tensor,
     patches_x: int,
     patches_y: int,
+    camera_model: str = "pinhole",
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """RoPE coefficients of one block (RayRoPE's ``_prepare_apply_fns``).
 
@@ -294,12 +336,13 @@ def _coefficients(
     num_patches = patches_y * patches_x
     img_len = num_cameras * num_patches
     depths = _depths(raw_depth.float(), num_cameras, num_patches)
-    uv = _patch_uv(patches_x, patches_y, raw_depth.device)
-    world = _world_points(projection_inv, uv, depths)
+    pixel_rays = _pixel_rays(patches_x, patches_y, camera_model, raw_depth.device)
+    world = _world_points(projection_inv, pixel_rays, depths)
+    signed_depth = camera_model == "equirect"
 
     cos_k, sin_k, query_centers, query_rays = [], [], [], []
     for camera_index in range(num_cameras):
-        centers, rays = _query_positions(c2w, w2c, projection, world, camera_index)
+        centers, rays = _query_positions(c2w, w2c, projection, world, camera_index, signed_depth)
         cosine, sine = _pack_cos_sin(
             centers.reshape(batch, img_len, 3), rays.reshape(2, batch, img_len, 9)
         )
@@ -429,7 +472,7 @@ def rayrope_attention(
     with torch.autocast(device_type=q_content.device.type, enabled=False):
         cos_q, sin_q, cos_k, sin_k = _coefficients(
             geom["c2w"], geom["w2c"], geom["projection"], geom["projection_inv"],
-            raw_depth, geom["patches_x"], geom["patches_y"],
+            raw_depth, geom["patches_x"], geom["patches_y"], geom.get("camera_model", "pinhole"),
         )
     return per_camera_attention(
         q_content, k_content, v, q_rope, k_rope, num_txt, cos_q, sin_q, cos_k, sin_k,
