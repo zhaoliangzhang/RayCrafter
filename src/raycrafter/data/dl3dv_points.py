@@ -81,6 +81,19 @@ def _c2w(w2c) -> torch.Tensor:
     return torch.linalg.inv(torch.tensor(w2c, dtype=torch.float64)).to(torch.float32)
 
 
+def pixel_dropout(image: Image.Image, min_dropout: float, max_dropout: float, rng) -> Image.Image:
+    """Black out a fraction of pixels drawn uniformly from the integer percents
+    in ``[min_dropout, max_dropout]`` (inclusive, so 100% is reachable)."""
+    min_percent = int(round(min_dropout * 100.0))
+    max_percent = int(round(max_dropout * 100.0))
+    dropout_ratio = rng.randint(min_percent, max_percent) / 100.0
+    pixels = np.asarray(image, dtype=np.uint8).copy()
+    pixel_rng = np.random.default_rng(rng.getrandbits(64))
+    remove = pixel_rng.random((image.height, image.width)) < dropout_ratio
+    pixels[remove] = 0
+    return Image.fromarray(pixels, mode="RGB")
+
+
 def load_near_depth(path: Union[str, Path]) -> Dict[str, float]:
     """``{scene_name: {"near_depth": d, ...}}`` → ``{scene_name: d}``, skipping failed scenes."""
     records = json.loads(Path(path).read_text())
@@ -154,14 +167,7 @@ class Dl3dvPoints(Dataset):
             return image.copy(), src_wh
 
     def _degrade(self, image: Image.Image, rng: random.Random) -> Image.Image:
-        min_percent = int(round(self.min_pixel_dropout * 100.0))
-        max_percent = int(round(self.max_pixel_dropout * 100.0))
-        dropout_ratio = rng.randint(min_percent, max_percent) / 100.0
-        pixels = np.asarray(image, dtype=np.uint8).copy()
-        pixel_rng = np.random.default_rng(rng.getrandbits(64))
-        remove = pixel_rng.random((image.height, image.width)) < dropout_ratio
-        pixels[remove] = 0
-        return Image.fromarray(pixels, mode="RGB")
+        return pixel_dropout(image, self.min_pixel_dropout, self.max_pixel_dropout, rng)
 
     def _black(self) -> Image.Image:
         return Image.new("RGB", (self.width, self.height), (0, 0, 0))
