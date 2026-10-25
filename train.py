@@ -32,8 +32,11 @@ from raycrafter.checkpoint import (
 )
 from raycrafter.config import Config
 from raycrafter.data import make_dataloader
+from raycrafter.data.dataset import MixedLoader
+from raycrafter.data.panorama import make_panorama_dataloader
 from raycrafter.data.curriculum import make_progress_holder
 from raycrafter.lora import count_parameters, save_checkpoint
+from raycrafter.cameras.rayrope import DepthHead
 from raycrafter.model import RayCrafterModel
 
 try:
@@ -61,7 +64,8 @@ def _cameras(batch: dict, device):
     if "camera_c2w" not in batch:
         return {}
     return {"camera_c2w": batch["camera_c2w"].to(device),
-            "camera_fxfycxcy": batch["camera_fxfycxcy"].to(device)}
+            "camera_fxfycxcy": batch["camera_fxfycxcy"].to(device),
+            "camera_model": batch.get("camera_model", "pinhole")}
 
 
 def train(config: str) -> None:
@@ -120,13 +124,30 @@ def train(config: str) -> None:
         model.transformer = DDP(xfm, device_ids=[device], broadcast_buffers=False,
                                 find_unused_parameters=False, gradient_as_bucket_view=True)
     train_params = [p for p in xfm.parameters() if p.requires_grad]
+    depth_heads = [m for m in xfm.modules() if isinstance(m, DepthHead)]
+    depth_params = [p for m in depth_heads for p in m.parameters() if p.requires_grad]
+    depth_ids = {id(p) for p in depth_params}
+    param_groups = [{"params": [p for p in train_params if id(p) not in depth_ids]}]
+    if depth_params:
+        # ``lr_scale`` keeps the group's ratio to the scheduled backbone lr.
+        depth_lr = cfg.depth_head_lr if cfg.depth_head_lr is not None else cfg.learning_rate
+        param_groups.append({
+            "params": depth_params,
+            "lr": depth_lr,
+            "lr_scale": depth_lr / cfg.learning_rate,
+            "weight_decay": cfg.depth_head_weight_decay if cfg.depth_head_weight_decay is not None
+            else cfg.weight_decay,
+        })
+        if is_main:
+            print(f"depth heads: {len(depth_params)} tensors, lr {depth_lr:g}, "
+                  f"weight decay {param_groups[-1]['weight_decay']:g}")
     adamw = dict(lr=cfg.learning_rate, weight_decay=cfg.weight_decay, betas=(0.9, 0.999), eps=1e-8)
     if world_size > 1 and cfg.shard_optimizer:
         # ZeRO-1: each rank keeps AdamW state for 1/world_size of the parameters and
         # broadcasts its updated shard. fused=True avoids shard-sized foreach temporaries.
-        optimizer = ZeroRedundancyOptimizer(train_params, optimizer_class=AdamW, fused=True, **adamw)
+        optimizer = ZeroRedundancyOptimizer(param_groups, optimizer_class=AdamW, fused=True, **adamw)
     else:
-        optimizer = AdamW(train_params, **adamw)
+        optimizer = AdamW(param_groups, **adamw)
     if has_resume:
         load_training_state(xfm, optimizer, resume_dir, rank, world_size)
 
@@ -166,6 +187,25 @@ def train(config: str) -> None:
         val_loader = make_dataloader(
             cfg.val_shards, num_workers=1, shuffle=False, repeat=False, **points, **common,
         )
+    val_pano_loader = None
+    if cfg.panorama_ratio > 0:
+        pano = dict(root=cfg.panorama_root, num_views=cfg.num_views, ref_size=cfg.ref_size,
+                    image_size=tuple(cfg.panorama_image_size), batch_size=cfg.batch_size,
+                    use_pose=cfg.use_pose, near_depth_json=cfg.panorama_near_depth_json)
+        pano_train = make_panorama_dataloader(
+            manifests=cfg.panorama_train_manifests, num_workers=cfg.num_workers, shuffle=True,
+            min_pixel_dropout=cfg.min_pixel_dropout, max_pixel_dropout=cfg.max_pixel_dropout,
+            nvs_probability=cfg.nvs_probability, nvs_ratio=cfg.nvs_ratio, **pano,
+        )
+        # Per-rank draw: ranks see different sources in the same step.
+        train_loader = MixedLoader([train_loader, pano_train], [1.0 - cfg.panorama_ratio, cfg.panorama_ratio],
+                                   seed=rank)
+        if cfg.panorama_val_manifests:
+            # As dl3dv_points validation: the stored renders, no extra dropout.
+            val_pano_loader = make_panorama_dataloader(
+                manifests=cfg.panorama_val_manifests, num_workers=1, shuffle=False,
+                min_pixel_dropout=0.0, max_pixel_dropout=0.0, limit=VAL_BATCHES * cfg.batch_size, **pano,
+            )
 
     steps = cfg.num_inference_steps if isinstance(cfg.num_inference_steps, list) else [cfg.num_inference_steps]
     train_iter = iter(train_loader)
@@ -179,7 +219,7 @@ def train(config: str) -> None:
             progress.value = _progress(cfg, step)
         lr = _lr(cfg, step)
         for pg in optimizer.param_groups:
-            pg["lr"] = lr
+            pg["lr"] = lr * pg.get("lr_scale", 1.0)
 
         try:
             batch = next(train_iter)
@@ -200,12 +240,17 @@ def train(config: str) -> None:
         if is_main:
             now = time.time()
             log = {"train/loss": out["loss"].item(), "train/lr": lr,
+                   f"train/loss_{cams.get('camera_model', 'pinhole')}": out["loss"].item(),
                    "train/noise_frac": (batch["noise_alpha"] > 0).float().mean().item(),
                    "perf/steps_per_sec": 1.0 / max(now - t_last, 1e-6)}
             t_last = now
             for k in ("latent_loss", "lpips_loss", "l1_pixel_loss", "v_mag"):
                 if k in out:
                     log[f"train/{k}"] = out[k]
+            if depth_heads:
+                # Mean head bias: the depth interval every token starts from (log d, sigma).
+                bias = torch.stack([m.bias.detach().float() for m in depth_heads]).mean(dim=0)
+                log["depth/log_depth_bias"], log["depth/sigma_bias"] = bias.tolist()
             if use_wandb:
                 wandb.log(log, step=step)
             if step == 1 or step % 50 == 0:
@@ -223,6 +268,13 @@ def train(config: str) -> None:
                 print(f"step {step:>7d} | val/loss={val_loss:.4f} | val/loss_nvs={val_loss_nvs:.4f}", flush=True)
                 if use_wandb:
                     wandb.log({"val/loss": val_loss, "val/loss_nvs": val_loss_nvs}, step=step)
+        if val_pano_loader is not None and step % cfg.val_interval == 0:
+            val_loss, val_loss_nvs = _validate(model, val_pano_loader, device)
+            if is_main:
+                print(f"step {step:>7d} | val/loss_pano={val_loss:.4f} | val/loss_nvs_pano={val_loss_nvs:.4f}",
+                      flush=True)
+                if use_wandb:
+                    wandb.log({"val/loss_pano": val_loss, "val/loss_nvs_pano": val_loss_nvs}, step=step)
 
         if is_main and step % cfg.save_interval == 0:
             save_checkpoint(xfm, str(out_dir / f"transformer_step{step}.safetensors"), cfg.use_lora)
@@ -282,8 +334,11 @@ def _log_images(model, src, tgt, ref, noise_alpha, cams, steps, step, upload: bo
     wandb.log(logs, step=step)
 
 
+VAL_BATCHES = 20
+
+
 @torch.no_grad()
-def _validate(model, loader, device, max_batches: int = 20):
+def _validate(model, loader, device, max_batches: int = VAL_BATCHES):
     """Mean loss over the val batches as refinement (their degraded renders) and as
     NVS (pure-noise input, noise_alpha=1; meaningful with noise_space=latent)."""
     model.eval()

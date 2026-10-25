@@ -37,11 +37,20 @@ class Config:
     # RayRoPE / UniRoPE: also rotate V and the attention output (the RayRoPE
     # paper's default). Off by default so older checkpoints evaluate as trained.
     rope_apply_vo: bool = False
+    # UniRoPE: encode each token's patch footprint (three corner points at depth)
+    # instead of only its center point. Off by default for older checkpoints.
+    unirope_footprint: bool = False
 
     # ── Training ───────────────────────────────────────────────────────────
     batch_size: int = 1
     learning_rate: float = 1e-5
     weight_decay: float = 0.01
+    # RayRoPE / UniRoPE depth heads: their own AdamW group. They start at zero
+    # (log depth 0, sigma 3) and at the backbone's 1e-5 barely move (sigma was
+    # still 2.96 after 90k steps); the reference RayRoPE trains them with the
+    # whole model at 4e-4 and weight decay 0.5. None: learning_rate / weight_decay.
+    depth_head_lr: Optional[float] = None
+    depth_head_weight_decay: Optional[float] = None
     max_steps: int = 20000
     warmup_steps: int = 500
     lr_schedule: str = "cosine"       # "cosine" | "constant"
@@ -85,6 +94,17 @@ class Config:
     # scripts/estimate_near_depth_dl3dv_points.py. Translations are divided by
     # d (SCoPE's near-depth normalization); scenes without one are dropped.
     near_depth_json: Optional[str] = None
+    # Equirect panorama sets (data/panorama.py) mixed into dl3dv_points training:
+    # each training batch is a panorama batch with probability panorama_ratio
+    # (one camera model per batch). The dropout / NVS settings above apply to
+    # both. Manifests are relative to panorama_root.
+    panorama_ratio: float = 0.0
+    panorama_root: Optional[str] = None
+    panorama_train_manifests: List[str] = field(default_factory=list)
+    panorama_val_manifests: List[str] = field(default_factory=list)
+    # From scripts/estimate_near_depth_panorama.py; the same unit as near_depth_json.
+    panorama_near_depth_json: Optional[str] = None
+    panorama_image_size: List[int] = field(default_factory=lambda: [256, 512])
     image_size: List[int] = field(default_factory=lambda: [432, 768])
     num_workers: int = 1
     window: int = 15
@@ -154,6 +174,22 @@ class Config:
                 "save_interval and resume_interval must be positive, "
                 f"got {self.save_interval} and {self.resume_interval}"
             )
+        if not 0.0 <= float(self.panorama_ratio) <= 1.0:
+            raise ValueError(f"panorama_ratio must be in [0, 1], got {self.panorama_ratio}")
+        if float(self.panorama_ratio) > 0.0:
+            if self.data_format != "dl3dv_points":
+                raise ValueError("panorama_ratio > 0 mixes panoramas into data_format: dl3dv_points")
+            if not self.panorama_root or not self.panorama_train_manifests:
+                raise ValueError("panorama_ratio > 0 needs panorama_root and panorama_train_manifests")
+            # The VAE (2x2-patchified latents) maps 16 px to one token: other sizes
+            # get center-cropped, which cuts an equirect image's longitude range.
+            for name in ("image_size", "panorama_image_size"):
+                h, w = (int(v) for v in getattr(self, name))
+                if h % 16 or w % 16:
+                    raise ValueError(f"{name} must be multiples of 16 when mixing panoramas, got {h}x{w}")
+            h, w = (int(v) for v in self.panorama_image_size)
+            if w != 2 * h:
+                raise ValueError(f"panorama_image_size must be 2:1, got {h}x{w}")
         if self.data_format == "dl3dv_points" and (self.num_views != 3 or self.ref_size != 2):
             raise ValueError(
                 "dl3dv_points samples are 2 reference images and 3 target views; "
