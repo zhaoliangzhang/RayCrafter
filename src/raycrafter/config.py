@@ -32,7 +32,7 @@ class Config:
     sort_refs_by_distance: bool = True
 
     # ── Camera conditioning ────────────────────────────────────────────────
-    camera_condition: str = "scope"   # "none" | "scope"
+    camera_condition: str = "scope"   # "none" | "scope" | "plucker_concat"
     rope_type: str = "rayrope"        # "flux" | "rayrope" | "prope" | "unirope" | "unirope_anchor"
     # RayRoPE / UniRoPE: also rotate V and the attention output (the RayRoPE
     # paper's default). Off by default so older checkpoints evaluate as trained.
@@ -135,8 +135,12 @@ class Config:
         return self.camera_condition == "scope"
 
     @property
+    def uses_raymap(self) -> bool:
+        return self.camera_condition == "plucker_concat"
+
+    @property
     def needs_cameras(self) -> bool:
-        return self.uses_scope or self.rope_type != "flux"
+        return self.uses_scope or self.uses_raymap or self.rope_type != "flux"
 
     @property
     def use_pose(self) -> bool:
@@ -146,7 +150,7 @@ class Config:
     def validate(self) -> None:
         choices = {
             "backbone": ("flux2", "flux3"),
-            "camera_condition": ("none", "scope"),
+            "camera_condition": ("none", "scope", "plucker_concat"),
             "rope_type": ("flux", "rayrope", "prope", "unirope", "unirope_anchor"),
             "lr_schedule": ("cosine", "constant"),
             "mixed_precision": ("bf16", "fp32"),
@@ -158,6 +162,8 @@ class Config:
         for name, allowed in choices.items():
             if getattr(self, name) not in allowed:
                 raise ValueError(f"{name} must be one of {allowed}, got {getattr(self, name)!r}")
+        if self.uses_raymap and self.backbone != "flux3":
+            raise ValueError(f"camera_condition plucker_concat needs backbone flux3, got {self.backbone!r}")
         if not 0.0 <= float(self.min_pixel_dropout) <= float(self.max_pixel_dropout) <= 1.0:
             raise ValueError(
                 "pixel dropout must satisfy 0 <= min_pixel_dropout <= max_pixel_dropout <= 1, "

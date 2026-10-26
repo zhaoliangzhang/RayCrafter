@@ -125,6 +125,7 @@ def train(config: str) -> None:
                                 find_unused_parameters=False, gradient_as_bucket_view=True)
     train_params = [p for p in xfm.parameters() if p.requires_grad]
     depth_heads = [m for m in xfm.modules() if isinstance(m, DepthHead)]
+    ray_in = getattr(xfm, "ray_in", None)
     depth_params = [p for m in depth_heads for p in m.parameters() if p.requires_grad]
     depth_ids = {id(p) for p in depth_params}
     param_groups = [{"params": [p for p in train_params if id(p) not in depth_ids]}]
@@ -208,6 +209,8 @@ def train(config: str) -> None:
             )
 
     steps = cfg.num_inference_steps if isinstance(cfg.num_inference_steps, list) else [cfg.num_inference_steps]
+    # Black queries are how nvs_ratio / nvs_probability train NVS (validation turns them off).
+    black_queries = cfg.nvs_ratio > 0 or cfg.nvs_probability > 0
     train_iter = iter(train_loader)
     step = int(cfg.start_step)
     t_last = time.time()
@@ -251,6 +254,10 @@ def train(config: str) -> None:
                 # Mean head bias: the depth interval every token starts from (log d, sigma).
                 bias = torch.stack([m.bias.detach().float() for m in depth_heads]).mean(dim=0)
                 log["depth/log_depth_bias"], log["depth/sigma_bias"] = bias.tolist()
+            if ray_in is not None:
+                # Zero at step 0: how far the ray-map projection has moved.
+                for mode, layer in ray_in.items():
+                    log[f"camera/ray_in_norm_{mode}"] = layer.weight.detach().float().norm().item()
             if use_wandb:
                 wandb.log(log, step=step)
             if step == 1 or step % 50 == 0:
@@ -262,19 +269,15 @@ def train(config: str) -> None:
         if use_wandb and (step - 1) % cfg.log_interval == 0:
             _log_images(model, src, tgt, ref, batch["noise_alpha"], cams, steps, step, upload=is_main)
 
-        if val_loader is not None and step % cfg.val_interval == 0:
-            val_loss, val_loss_nvs = _validate(model, val_loader, device)
+        for loader, suffix in ((val_loader, ""), (val_pano_loader, "_pano")):
+            if loader is None or step % cfg.val_interval != 0:
+                continue
+            val = _validate(model, loader, device, black=black_queries)
             if is_main:
-                print(f"step {step:>7d} | val/loss={val_loss:.4f} | val/loss_nvs={val_loss_nvs:.4f}", flush=True)
+                val = {f"val/{k}{suffix}": v for k, v in val.items()}
+                print(f"step {step:>7d} | " + " | ".join(f"{k}={v:.4f}" for k, v in val.items()), flush=True)
                 if use_wandb:
-                    wandb.log({"val/loss": val_loss, "val/loss_nvs": val_loss_nvs}, step=step)
-        if val_pano_loader is not None and step % cfg.val_interval == 0:
-            val_loss, val_loss_nvs = _validate(model, val_pano_loader, device)
-            if is_main:
-                print(f"step {step:>7d} | val/loss_pano={val_loss:.4f} | val/loss_nvs_pano={val_loss_nvs:.4f}",
-                      flush=True)
-                if use_wandb:
-                    wandb.log({"val/loss_pano": val_loss, "val/loss_nvs_pano": val_loss_nvs}, step=step)
+                    wandb.log(val, step=step)
 
         if is_main and step % cfg.save_interval == 0:
             save_checkpoint(xfm, str(out_dir / f"transformer_step{step}.safetensors"), cfg.use_lora)
@@ -338,22 +341,31 @@ VAL_BATCHES = 20
 
 
 @torch.no_grad()
-def _validate(model, loader, device, max_batches: int = VAL_BATCHES):
-    """Mean loss over the val batches as refinement (their degraded renders) and as
-    NVS (pure-noise input, noise_alpha=1; meaningful with noise_space=latent)."""
+def _validate(model, loader, device, max_batches: int = VAL_BATCHES, black: bool = False):
+    """Mean loss over the val batches as refinement (``loss``: their degraded renders)
+    and as NVS (``loss_nvs``: pure-noise input, noise_alpha=1; meaningful with
+    noise_space=latent). ``black`` adds ``loss_black``: every query black, the NVS
+    input of nvs_ratio / nvs_probability training."""
     model.eval()
-    total, total_nvs, count = 0.0, 0.0, 0
+    totals, count = {"loss": 0.0, "loss_nvs": 0.0}, 0
+    if black:
+        totals["loss_black"] = 0.0
     for i, batch in enumerate(loader):
         if i >= max_batches:
             break
         src, tgt, ref = (batch[k].to(device) for k in ("src", "tgt", "ref"))
         cams = _cameras(batch, device)
-        total += model.training_step(src, tgt, ref, noise_alpha=batch["noise_alpha"], **cams)["loss"].item()
+        totals["loss"] += model.training_step(src, tgt, ref, noise_alpha=batch["noise_alpha"], **cams)["loss"].item()
         nvs = torch.ones_like(batch["noise_alpha"])
-        total_nvs += model.training_step(src, tgt, ref, noise_alpha=nvs, **cams)["loss"].item()
+        totals["loss_nvs"] += model.training_step(src, tgt, ref, noise_alpha=nvs, **cams)["loss"].item()
+        if black:
+            no_noise = torch.zeros_like(batch["noise_alpha"])
+            totals["loss_black"] += model.training_step(
+                torch.full_like(src, -1.0), tgt, ref, noise_alpha=no_noise, **cams
+            )["loss"].item()
         count += 1
     model.train()
-    return total / max(count, 1), total_nvs / max(count, 1)
+    return {k: v / max(count, 1) for k, v in totals.items()}
 
 
 if __name__ == "__main__":

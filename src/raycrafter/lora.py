@@ -10,7 +10,7 @@ from safetensors.torch import load_file, save_file
 
 # Parameter-name fragments saved in a LoRA checkpoint: the adapters plus the
 # camera modules, which are new full weights even in LoRA mode.
-TRAINABLE_KEYS = ("lora_a", "lora_b", "scope_pe", "rayrope_depth")
+TRAINABLE_KEYS = ("lora_a", "lora_b", "scope_pe", "rayrope_depth", "ray_in.")
 
 
 class LoRALinear(nn.Module):

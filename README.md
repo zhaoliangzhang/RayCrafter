@@ -27,6 +27,11 @@ SCoPE, RayRoPE, PRoPE and UniRoPE, for pinhole cameras.
   camera center, full unit direction and predicted-depth point, all moved into
   each query camera's frame by SE(3) only. Only the ray generator knows the
   camera model (pinhole now; an equirect generator is in place for panoramas).
+- **Plücker ray concat** (`camera_condition: plucker_concat`, FLUX 3). As in
+  FrameCrafter / OmniCrafter: every pixel's Plücker ray (pinhole or equirect),
+  pixel-unshuffled to 1536 values per token, goes through a zero-initialized
+  projection added to the input embedding, i.e. it is concatenated to the latent
+  channels. Poses: last camera at the origin, unit mean camera distance.
 - PRoPE keeps the backbone RoPE axis that numbers the images (`t` on FLUX.2,
   `l` on FLUX 3) and replaces the other 96 channels; RayRoPE (120 + 8
   pass-through) and UniRoPE (126 + 2) replace the whole head. SCoPE starts at zero, so at step 0 it is exactly the
@@ -124,6 +129,7 @@ src/raycrafter/
   cameras/rayrope.py           RayRoPE: projective geometry + attention (backbone-free)
   cameras/prope.py             PRoPE: relative projective transforms + attention (backbone-free)
   cameras/unirope.py           UniRoPE: ray generators + ray-based per-camera attention (backbone-free)
+  cameras/raymap.py            Plücker ray map for plucker_concat (backbone-free)
   data/                        WebDataset loader, multi-view grouping, curriculum
 ```
 
