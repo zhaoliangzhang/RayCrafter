@@ -9,7 +9,8 @@ Token sequence (one flat self-attention sequence, no channel surgery):
   Gaussian noise for novel-view synthesis (``noise_space=latent``, alpha=1).
 * Refs are clean and stay clean at every t.
 * Cameras are ordered ``[ref..., views...]`` and enter only through the
-  camera modules (SCoPE on Q/K/V, RayRoPE or PRoPE on the RoPE channels).
+  camera modules (SCoPE on Q/K/V, RayRoPE or PRoPE on the RoPE channels, or
+  a Plücker ray map on the input channels).
 
 The loss is MSE on the velocity ``z_src - z_tgt`` of the V view tokens, plus
 optional LPIPS / L1 on the decoded one-step estimate ``x0 = z_t - t·v``.
@@ -52,7 +53,8 @@ class RayCrafterModel(nn.Module):
 
         # Added after freeze_base_model, so camera modules always train.
         backbone.install_camera_attention(
-            self.transformer, scope=cfg.uses_scope, rope_type=cfg.rope_type, apply_vo=cfg.rope_apply_vo
+            self.transformer, scope=cfg.uses_scope, rope_type=cfg.rope_type, apply_vo=cfg.rope_apply_vo,
+            raymap=cfg.uses_raymap,
         )
         print(f"camera_condition={cfg.camera_condition}  rope_type={cfg.rope_type}")
 
@@ -166,7 +168,7 @@ class RayCrafterModel(nn.Module):
         if self.cfg.needs_cameras:
             cams = self.backbone.camera_inputs(
                 c2w, fxfycxcy, (H, W), (h, w), self.cfg.uses_scope, self.cfg.rope_type,
-                footprint=self.cfg.unirope_footprint, camera_model=camera_model,
+                footprint=self.cfg.unirope_footprint, camera_model=camera_model, raymap=self.cfg.uses_raymap,
             )
         return z_src, z_tgt, x_ref.to(self._dtype), ref_ids.to(src_imgs.device), cams, (h, w)
 

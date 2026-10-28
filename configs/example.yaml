@@ -81,6 +81,11 @@ sort_refs_by_distance: true
 #   scope → SCoPE: each image token gets the Plücker ray (direction, moment)
 #           through its patch center; a learned projection is added to Q and K
 #           after RoPE in every attention layer, plus a per-frame residual on V.
+#   plucker_concat → FrameCrafter / OmniCrafter: the per-pixel Plücker ray map
+#           (16×16 pixels × 6 = 1536 values per token, last camera at the
+#           origin, unit mean camera distance) goes through a zero-initialized
+#           linear layer added to the input projection, i.e. it is concatenated
+#           to the latent channels. Pinhole and equirect. flux3 only.
 camera_condition: scope
 # rope_type:
 #   flux    → the backbone's pretrained 4-axis RoPE (t, h, w, l) on all 128 head

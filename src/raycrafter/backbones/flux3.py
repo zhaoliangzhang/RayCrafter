@@ -13,7 +13,9 @@ there is no text, so the text stream never runs and stays frozen.
 Camera modules sit in every block that sees image tokens. In the per-mode
 blocks each mode uses only its own cameras (refs or views). RayRoPE, PRoPE and
 UniRoPE keep the ``l`` RoPE axis (channels 96:128, which tells images apart in FLUX 3)
-and replace ``t, h, w``.
+and replace ``t, h, w``. ``plucker_concat`` instead adds a zero-initialized
+projection of the pixel ray map (``cameras/raymap.py``) to each mode's input
+embedding (``ray_in``), as if the rays were concatenated to the 128 latent channels.
 
 FLUX 3 code comes from https://github.com/black-forest-labs/flux-3-image-klein (see README).
 """
@@ -46,6 +48,7 @@ from flux3.autoencoder import latent_ids
 from flux3.dit import DEPTH, HIDDEN, DiT, layernorm_modulation, rope_embed, timestep_embedding
 
 from ..cameras.prope import prope_attention
+from ..cameras.raymap import raymap_channels
 from ..cameras.rayrope import DepthHead, subset_geometry
 from ..cameras.scope import SightlineCoordinatePE, scope_qkv
 from .flux2 import (  # noqa: F401
@@ -143,10 +146,14 @@ class Flux3(DiT):
         """Velocity of the view tokens ``(B, V*h*w, 128)``. Ids are ``(B, L, 4)``."""
         num_views, num_refs = x_views.shape[1], x_ref.shape[1]
         has_scope = hasattr(self.single_blocks[0], "scope_pe")
+        has_raymap = hasattr(self, "ray_in")
         rope_type = self._rope_type
-        if (has_scope or rope_type != "flux") and self._camera is None:
+        if (has_scope or has_raymap or rope_type != "flux") and self._camera is None:
             raise RuntimeError("camera conditioning is installed but no cameras were set for this forward")
         plucker = self._camera["plucker"] if has_scope else None
+        raymap = self._camera["raymap"] if has_raymap else None
+        if has_raymap and raymap is None:
+            raise RuntimeError("ray_in is installed but the cameras of this forward have no raymap")
         geom = self._camera["geom"] if rope_type != "flux" else None
         ref_rays = view_rays = ref_geom = view_geom = None
         frames = r_frames = v_frames = 0
@@ -168,6 +175,10 @@ class Flux3(DiT):
 
         img = self.emb_in["image"](x_views)
         ref = self.emb_in["image_cond"](x_ref)
+        if raymap is not None:
+            # emb_in is bias-free, so this is emb_in on [latent | rays] with zero-initialized ray columns.
+            img = img + self.ray_in["image"](raymap[:, num_refs:].to(x_views.dtype))
+            ref = ref + self.ray_in["image_cond"](raymap[:, :num_refs].to(x_ref.dtype))
         freqs_img, freqs_ref = rope_embed(view_ids), rope_embed(ref_ids)
         for d in range(DEPTH):
             img = self._block(self.content_mode_blocks["image"][d], img, freqs_img, early_img,
@@ -235,18 +246,28 @@ def run_transformer(transformer: nn.Module, x_ref, ref_ids, x_views, view_ids, t
 # ── Camera conditioning ─────────────────────────────────────────────────────
 
 
-def install_camera_attention(transformer: Flux3, scope: bool, rope_type: str, apply_vo: bool = False) -> None:
+def install_camera_attention(
+    transformer: Flux3, scope: bool, rope_type: str, apply_vo: bool = False, raymap: bool = False
+) -> None:
     """Add camera modules to every block that sees image tokens.
 
     ``rope_type`` is ``flux``, ``rayrope``, ``prope`` (no parameters),
-    ``unirope`` or ``unirope_anchor``. Module names (``scope_pe`` and the ``DEPTH_HEADS`` values)
-    are checkpoint keys.
+    ``unirope`` or ``unirope_anchor``. ``raymap`` adds ``ray_in``, the ray-map
+    input projection of ``plucker_concat``. Module names (``scope_pe``,
+    ``ray_in`` and the ``DEPTH_HEADS`` values) are checkpoint keys.
     """
     transformer._rope_type = rope_type
     transformer._rope_apply_vo = apply_vo
+    ref = next(transformer.parameters())
+    if raymap:
+        transformer.ray_in = nn.ModuleDict({
+            m: nn.Linear(raymap_channels(PATCH), HIDDEN, bias=False) for m in ("image", "image_cond")
+        }).to(device=ref.device, dtype=ref.dtype)
+        # Zero: step 0 is the pretrained model.
+        for layer in transformer.ray_in.values():
+            nn.init.zeros_(layer.weight)
     if not scope and rope_type not in DEPTH_HEADS:
         return
-    ref = next(transformer.parameters())
     blocks = [*transformer.content_mode_blocks["image"], *transformer.content_mode_blocks["image_cond"],
               *transformer.single_blocks]
     for block in blocks:

@@ -38,6 +38,7 @@ from flux2.model import Flux2, Flux2Params, Klein4BParams, Klein9BParams, apply_
 from flux2.sampling import prc_img
 
 from ..cameras.prope import prope_attention
+from ..cameras.raymap import plucker_raymap
 from ..cameras.rayrope import DepthHead, prepare_geometry, rayrope_attention
 from ..cameras.scope import SightlineCoordinatePE, plucker_tokens, scope_qkv
 from ..cameras.unirope import prepare_unirope, unirope_anchor_attention, unirope_attention
@@ -177,9 +178,11 @@ def camera_inputs(
     rope_type: str,
     footprint: bool = False,
     camera_model: str = "pinhole",
+    raymap: bool = False,
 ) -> dict:
     """Per-forward camera tensors, shared by every block. ``footprint`` gives
-    UniRoPE the patch corner rays too. ``camera_model`` (one per batch) is
+    UniRoPE the patch corner rays too. ``raymap`` adds the per-pixel Plücker
+    ray map of ``plucker_concat``. ``camera_model`` (one per batch) is
     ``pinhole`` or ``equirect``; every camera encoding but PRoPE takes both."""
     unirope = lambda *args: prepare_unirope(*args, footprint=footprint, camera_model=camera_model)  # noqa: E731
     rayrope = lambda *args: prepare_geometry(*args, camera_model=camera_model)  # noqa: E731
@@ -197,6 +200,10 @@ def camera_inputs(
                 if scope else None
             ),
             "geom": prepare(c2w, fxfycxcy, image_hw, latent_hw) if prepare else None,
+            "raymap": (
+                plucker_raymap(c2w, fxfycxcy, image_hw, latent_hw, PATCH, camera_model=camera_model)
+                if raymap else None
+            ),
             "num_frames": int(c2w.shape[1]),
         }
 
@@ -269,14 +276,19 @@ def _single_forward(self, x, pe, mod, num_txt_tokens, num_ref_tokens):
     return self._out(x, attn, mlp, mod_gate), {}
 
 
-def install_camera_attention(transformer: Flux2, scope: bool, rope_type: str, apply_vo: bool = False) -> None:
+def install_camera_attention(
+    transformer: Flux2, scope: bool, rope_type: str, apply_vo: bool = False, raymap: bool = False
+) -> None:
     """Add camera modules to every block and patch its attention.
 
     ``rope_type`` is ``flux`` (backbone RoPE only), ``rayrope``, ``prope`` (no
     parameters), ``unirope`` or ``unirope_anchor``. Module names (``scope_pe`` and the
     ``DEPTH_HEADS`` values) are checkpoint keys. ``apply_vo`` makes RayRoPE /
-    UniRoPE also rotate V and the attention output.
+    UniRoPE also rotate V and the attention output. ``raymap``
+    (``plucker_concat``) is FLUX 3 only.
     """
+    if raymap:
+        raise NotImplementedError("camera_condition plucker_concat is implemented for the flux3 backbone only")
     if not scope and rope_type == "flux":
         return
     ref = next(transformer.parameters())
