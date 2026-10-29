@@ -179,12 +179,17 @@ def camera_inputs(
     footprint: bool = False,
     camera_model: str = "pinhole",
     raymap: bool = False,
+    scope_patch_size: bool = False,
+    adaptive_freqs: bool = False,
 ) -> dict:
     """Per-forward camera tensors, shared by every block. ``footprint`` gives
-    UniRoPE the patch corner rays too. ``raymap`` adds the per-pixel Plücker
-    ray map of ``plucker_concat``. ``camera_model`` (one per batch) is
-    ``pinhole`` or ``equirect``; every camera encoding but PRoPE takes both."""
-    unirope = lambda *args: prepare_unirope(*args, footprint=footprint, camera_model=camera_model)  # noqa: E731
+    UniRoPE the patch corner rays too, ``adaptive_freqs`` its per-camera direction
+    band. ``raymap`` adds the per-pixel Plücker ray map of ``plucker_concat``.
+    ``camera_model`` (one per batch) is ``pinhole`` or ``equirect``; every
+    camera encoding but PRoPE takes both."""
+    unirope = lambda *args: prepare_unirope(  # noqa: E731
+        *args, footprint=footprint, camera_model=camera_model, adaptive_freqs=adaptive_freqs
+    )
     rayrope = lambda *args: prepare_geometry(*args, camera_model=camera_model)  # noqa: E731
     geometry = {
         "flux": None, "rayrope": rayrope, "prope": prepare_geometry,
@@ -196,7 +201,8 @@ def camera_inputs(
         prepare = geometry[rope_type]
         return {
             "plucker": (
-                plucker_tokens(c2w, fxfycxcy, image_hw, latent_hw, PATCH, camera_model=camera_model)
+                plucker_tokens(c2w, fxfycxcy, image_hw, latent_hw, PATCH, camera_model=camera_model,
+                               patch_size=scope_patch_size)
                 if scope else None
             ),
             "geom": prepare(c2w, fxfycxcy, image_hw, latent_hw) if prepare else None,
@@ -277,7 +283,8 @@ def _single_forward(self, x, pe, mod, num_txt_tokens, num_ref_tokens):
 
 
 def install_camera_attention(
-    transformer: Flux2, scope: bool, rope_type: str, apply_vo: bool = False, raymap: bool = False
+    transformer: Flux2, scope: bool, rope_type: str, apply_vo: bool = False, raymap: bool = False,
+    scope_kwargs: Optional[dict] = None,
 ) -> None:
     """Add camera modules to every block and patch its attention.
 
@@ -304,7 +311,8 @@ def install_camera_attention(
         # as a child of its own block and make .train() recurse forever.
         object.__setattr__(block, "_camera_host", transformer)
         if scope:
-            block.scope_pe = SightlineCoordinatePE(hidden).to(device=ref.device, dtype=ref.dtype)
+            block.scope_pe = SightlineCoordinatePE(hidden, **(scope_kwargs or {}))
+            block.scope_pe.to(device=ref.device, dtype=ref.dtype)
         if rope_type in DEPTH_HEADS:
             setattr(block, DEPTH_HEADS[rope_type], DepthHead(hidden).to(device=ref.device, dtype=ref.dtype))
         block.forward_kv_extract = forward.__get__(block, block.__class__)

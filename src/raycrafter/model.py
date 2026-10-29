@@ -55,6 +55,8 @@ class RayCrafterModel(nn.Module):
         backbone.install_camera_attention(
             self.transformer, scope=cfg.uses_scope, rope_type=cfg.rope_type, apply_vo=cfg.rope_apply_vo,
             raymap=cfg.uses_raymap,
+            scope_kwargs=dict(mlp_hidden=cfg.scope_mlp_hidden, dir_freqs=cfg.scope_dir_freqs,
+                              patch_size=cfg.scope_patch_size),
         )
         print(f"camera_condition={cfg.camera_condition}  rope_type={cfg.rope_type}")
 
@@ -169,6 +171,8 @@ class RayCrafterModel(nn.Module):
             cams = self.backbone.camera_inputs(
                 c2w, fxfycxcy, (H, W), (h, w), self.cfg.uses_scope, self.cfg.rope_type,
                 footprint=self.cfg.unirope_footprint, camera_model=camera_model, raymap=self.cfg.uses_raymap,
+                scope_patch_size=self.cfg.scope_patch_size,
+                adaptive_freqs=self.cfg.unirope_adaptive_freqs,
             )
         return z_src, z_tgt, x_ref.to(self._dtype), ref_ids.to(src_imgs.device), cams, (h, w)
 

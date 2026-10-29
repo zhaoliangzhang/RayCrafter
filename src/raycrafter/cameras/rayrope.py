@@ -416,7 +416,7 @@ def merge_channels(kept: torch.Tensor, camera_channels: torch.Tensor, rope_axis:
 def subset_geometry(geom: dict, start: int, end: int) -> dict:
     """Geometry of cameras ``start:end``, in the same normalized frame."""
     out = dict(geom)
-    for key in ("c2w", "w2c", "projection", "projection_inv", "directions"):
+    for key in ("c2w", "w2c", "projection", "projection_inv", "directions", "patch_angle"):
         if key in geom:
             out[key] = geom[key][:, start:end]
     out["num_cameras"] = end - start

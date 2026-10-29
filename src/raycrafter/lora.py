@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Dict, List
 
 import torch
 import torch.nn as nn
-from safetensors.torch import load_file, save_file
+from safetensors.torch import load_file
 
 # Parameter-name fragments saved in a LoRA checkpoint: the adapters plus the
 # camera modules, which are new full weights even in LoRA mode.
@@ -72,13 +73,18 @@ def count_parameters(model: nn.Module) -> tuple[int, int]:
 
 
 def save_checkpoint(model: nn.Module, path: str, lora_only: bool) -> None:
-    """Save the transformer in bf16: the full state dict, or only TRAINABLE_KEYS for LoRA."""
-    sd = {
-        k: v.detach().to(torch.bfloat16).cpu()
+    """Save the transformer in bf16: the full state dict, or only TRAINABLE_KEYS for LoRA.
+
+    Streamed one tensor at a time, so the host never holds the whole bf16 copy
+    (11 GB for FLUX 3): building it in memory OOM-killed the mixed-data runs at
+    their first save under a 32 GB job limit."""
+    from .checkpoint import _stream_save
+
+    _stream_save(Path(path), (
+        (k, v.detach().to(torch.bfloat16))
         for k, v in model.state_dict().items()
         if not lora_only or any(key in k for key in TRAINABLE_KEYS)
-    }
-    save_file(sd, path)
+    ))
 
 
 def load_trainable_weights(model: nn.Module, path: str) -> None:

@@ -247,7 +247,8 @@ def run_transformer(transformer: nn.Module, x_ref, ref_ids, x_views, view_ids, t
 
 
 def install_camera_attention(
-    transformer: Flux3, scope: bool, rope_type: str, apply_vo: bool = False, raymap: bool = False
+    transformer: Flux3, scope: bool, rope_type: str, apply_vo: bool = False, raymap: bool = False,
+    scope_kwargs: Optional[dict] = None,
 ) -> None:
     """Add camera modules to every block that sees image tokens.
 
@@ -272,7 +273,8 @@ def install_camera_attention(
               *transformer.single_blocks]
     for block in blocks:
         if scope:
-            block.scope_pe = SightlineCoordinatePE(HIDDEN).to(device=ref.device, dtype=ref.dtype)
+            block.scope_pe = SightlineCoordinatePE(HIDDEN, **(scope_kwargs or {}))
+            block.scope_pe.to(device=ref.device, dtype=ref.dtype)
         if rope_type in DEPTH_HEADS:
             setattr(block, DEPTH_HEADS[rope_type], DepthHead(HIDDEN).to(device=ref.device, dtype=ref.dtype))
 

@@ -33,6 +33,13 @@ class Config:
 
     # ── Camera conditioning ────────────────────────────────────────────────
     camera_condition: str = "scope"   # "none" | "scope" | "plucker_concat"
+    # SCoPE MLP inputs beyond the released 7 (direction, moment, log scale):
+    # sin/cos of the direction components at scope_dir_freqs periods (0 = off),
+    # and the patch's angular size (scope_patch_size). scope_mlp_hidden = 64 is
+    # the released width.
+    scope_dir_freqs: int = 0
+    scope_patch_size: bool = False
+    scope_mlp_hidden: int = 64
     rope_type: str = "rayrope"        # "flux" | "rayrope" | "prope" | "unirope" | "unirope_anchor"
     # RayRoPE / UniRoPE: also rotate V and the attention output (the RayRoPE
     # paper's default). Off by default so older checkpoints evaluate as trained.
@@ -40,6 +47,9 @@ class Config:
     # UniRoPE: encode each token's patch footprint (three corner points at depth)
     # instead of only its center point. Off by default for older checkpoints.
     unirope_footprint: bool = False
+    # UniRoPE v3: direction frequencies per query camera, from its angular patch
+    # size (no aliasing on 360° panoramas). Off by default for older checkpoints.
+    unirope_adaptive_freqs: bool = False
 
     # ── Training ───────────────────────────────────────────────────────────
     batch_size: int = 1
@@ -179,6 +189,10 @@ class Config:
             raise ValueError(
                 "save_interval and resume_interval must be positive, "
                 f"got {self.save_interval} and {self.resume_interval}"
+            )
+        if int(self.scope_dir_freqs) < 0 or int(self.scope_mlp_hidden) <= 0:
+            raise ValueError(
+                f"scope_dir_freqs must be >= 0 and scope_mlp_hidden > 0, got {self.scope_dir_freqs}, {self.scope_mlp_hidden}"
             )
         if not 0.0 <= float(self.panorama_ratio) <= 1.0:
             raise ValueError(f"panorama_ratio must be in [0, 1], got {self.panorama_ratio}")

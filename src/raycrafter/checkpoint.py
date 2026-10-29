@@ -276,18 +276,26 @@ def _stream_save(
     tensors: Iterable[Tuple[str, torch.Tensor]],
     metadata: Optional[Dict[str, str]] = None,
 ) -> None:
-    """Write a safetensors file from a stream so only one tensor is on the host at a time."""
+    """Write a safetensors file from a stream so only one tensor is on the host at a time.
+
+    Written pages are synced and dropped from the page cache every
+    ``_DROP_EVERY`` bytes: the job's memory limit counts the page cache, and
+    letting ~40 GB of a resume save pile up there OOM-killed 32 GB jobs."""
     path = Path(path)
     payload = path.with_suffix(path.suffix + ".payload")
     header: Dict[str, object] = {}
     offset = 0
     with open(payload, "wb") as out:
+        pending = 0
         for name, tensor in tensors:
             dtype, shape, nbytes = _write_tensor(out, tensor)
             header[name] = {"dtype": dtype, "shape": shape, "data_offsets": [offset, offset + nbytes]}
             offset += nbytes
-        out.flush()
-        os.fsync(out.fileno())
+            pending += nbytes
+            if pending >= _DROP_EVERY:
+                _drop_cache(out)
+                pending = 0
+        _drop_cache(out)
     if metadata:
         header["__metadata__"] = metadata
     raw = json.dumps(header, separators=(",", ":")).encode("utf-8")
@@ -295,10 +303,29 @@ def _stream_save(
     with open(path, "wb") as out, open(payload, "rb") as src:
         out.write(struct.pack("<Q", len(raw)))
         out.write(raw)
-        shutil.copyfileobj(src, out, length=32 * 1024 * 1024)
-        out.flush()
-        os.fsync(out.fileno())
+        pending = 0
+        while chunk := src.read(32 * 1024 * 1024):
+            out.write(chunk)
+            pending += len(chunk)
+            if pending >= _DROP_EVERY:
+                _drop_cache(out)
+                _drop_cache(src)
+                pending = 0
+        _drop_cache(out)
+        _drop_cache(src)
     payload.unlink()
+
+
+_DROP_EVERY = 1 << 30
+
+
+def _drop_cache(handle) -> None:
+    """Flush ``handle`` and evict its pages from the page cache (written ones once on disk)."""
+    if handle.writable():
+        handle.flush()
+        os.fsync(handle.fileno())
+    if hasattr(os, "posix_fadvise"):
+        os.posix_fadvise(handle.fileno(), 0, 0, os.POSIX_FADV_DONTNEED)
 
 
 def _write_tensor(out, tensor: torch.Tensor) -> Tuple[str, List[int], int]:
