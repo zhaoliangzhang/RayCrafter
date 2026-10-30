@@ -1,0 +1,97 @@
+# FLUX 3 Image Klein Base (5.5B, undistilled) + SCoPE, perspective + panorama.
+# 2 clean refs (FLUX 3 reference stream) + 3 queries per sample. Half the batches are
+# DL3DV point splats at 288x512 (16:9 like the 960x540 frames, multiples of the VAE's
+# 16 px), half are equirect panoramas (HM3D + JHU) at 256x512; a batch holds one kind.
+# Half the queries are rendered points, half are black (nvs_ratio), for both kinds.
+# RoPE stays the pretrained FLUX 3 encoding. SCoPE is the only camera module
+# (released recipe: 7→64→dim MLP, plucker_eps 1e-3, log-scale gate shift, no V residual).
+# Poses are anchored on the nearest ref; translations are in near-depth units for both
+# kinds (per-scene near depth, SCoPE's estimator; panoramas use the equirect port).
+# Training notes (near depth, RayRoPE depth sign, depth-head lr): TRAINING_NOTES.md.
+
+backbone: flux3
+model_variant: flux.3-image-klein-base
+model_path: null
+ae_path: null
+
+use_lora: false
+
+num_views: 3
+ref_size: 2
+ref_t_scale: null    # unused by flux3 (refs get l = -1, -2)
+sort_refs_by_distance: true
+
+camera_condition: scope
+rope_type: flux
+
+batch_size: 1
+learning_rate: 1.0e-5
+weight_decay: 0.01
+max_steps: 1000000
+warmup_steps: 500
+lr_schedule: constant
+time_limit_hours: 71.5
+gradient_clip_norm: 1.0
+t_min: 0.02
+t_max: 1.0
+t_one_prob: 0.5
+mixed_precision: bf16
+lpips_loss_weight: 5.0
+l1_pixel_loss_weight: 1.0
+pixel_loss_latent_crop: null
+pixel_loss_t_weighting: none
+gradient_checkpointing: true
+# 5.5B AdamW state is ~90 GB in fp32; ZeRO-1 splits it over the 2 GPUs.
+shard_optimizer: true
+
+# This set has no dsim buckets. Query degradation is the pixel dropout below.
+enable_curriculum: false
+noise_levels: null
+noise_space: latent
+noise_mode: lerp
+
+data_format: dl3dv_points
+# SCoPE needs it: translations are divided by the scene's near depth (SCoPE's
+# normalization), and scenes without an estimate are dropped (the log prints how many).
+# Every method sets the same file, so all train on the same scenes.
+near_depth_json: /home/jhu/zzhan288/projects_rchella4/zzhan288/data/dl3dv_points/near_depth.json
+# Each query is fully black with probability nvs_ratio. The other queries draw
+# an integer dropout percent from min..max, which stops at 75 so they keep points.
+min_pixel_dropout: 0.0
+max_pixel_dropout: 0.75
+nvs_probability: 0.0
+nvs_ratio: 0.5
+train_shards: /home/jhu/zzhan288/projects_rchella4/zzhan288/data/dl3dv_points/train
+val_shards: /home/jhu/zzhan288/projects_rchella4/zzhan288/data/dl3dv_points/test
+image_size: [288, 512]
+num_workers: 1
+window: 15
+open_sequences: 4
+
+# Panorama sets (data/panorama.py): the dropout / nvs_ratio above apply to them too.
+panorama_ratio: 0.5
+panorama_root: /home/jhu/zzhan288/projects_rchella4/zzhan288/data/framecrafter_5input
+panorama_train_manifests:
+  - manifests/hm3d_train_cleanup_q1.jsonl
+  - manifests/jhu_holdout10_seed20260822/jhu_train_2ref1_excluding_10_scenes.jsonl
+# 10 JHU scenes held out of training; 20 sets spread over them per validation.
+panorama_val_manifests:
+  - manifests/jhu_holdout10_seed20260822/jhu_test_2ref1_10_scenes.jsonl
+# SCoPE: set this too. Without it panorama translations fall back to OmniCrafter's
+# gauge (mean camera distance), a different unit from the DL3DV near depth.
+panorama_near_depth_json: /home/jhu/zzhan288/projects_rchella4/zzhan288/data/framecrafter_5input/near_depth.json
+panorama_image_size: [256, 512]
+
+output_dir: outputs/flux3_mix_scope
+log_interval: 250
+val_interval: 500
+save_interval: 20000
+resume_interval: 2000
+use_wandb: true
+wandb_project: raycrafter
+wandb_run_name: flux3_mix_scope
+
+resume_from: null
+start_step: 0
+
+num_inference_steps: [1, 2, 4]

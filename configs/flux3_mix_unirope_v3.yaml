@@ -11,6 +11,7 @@
 # is not kept. Attention runs once per camera (5 passes per layer).
 # Poses are anchored on the nearest ref; translations are in near-depth units for both
 # kinds (per-scene near depth, SCoPE's estimator; panoramas use the equirect port).
+# Training notes (near depth, RayRoPE depth sign, depth-head lr): TRAINING_NOTES.md.
 
 backbone: flux3
 model_variant: flux.3-image-klein-base
@@ -32,6 +33,8 @@ rope_apply_vo: true
 unirope_footprint: true
 # v3: direction band per query camera, from its angular patch size (longest period 8,
 # shortest 3 patches): ~0.10 on these pinhole views as before, ~0.59 on panoramas.
+# Both UniRoPE flags add no parameters, so a strict checkpoint load cannot catch a
+# mismatch: evaluate or resume these checkpoints with the same two flags.
 unirope_adaptive_freqs: true
 
 batch_size: 1
@@ -39,6 +42,9 @@ learning_rate: 1.0e-5
 weight_decay: 0.01
 # Depth heads (zero-initialized) get the reference RayRoPE optimizer settings;
 # at the backbone's 1e-5 their sigma stayed at ~3 (depth unknown) for 90k steps.
+# null falls back to learning_rate / weight_decay. Constant schedule: these stay
+# 4e-4 / 0.5 after warmup. Check the log line "depth heads: ... lr 0.0004" and
+# depth/sigma_bias falling during training.
 depth_head_lr: 4.0e-4
 depth_head_weight_decay: 0.5
 max_steps: 1000000
@@ -65,7 +71,8 @@ noise_space: latent
 noise_mode: lerp
 
 data_format: dl3dv_points
-# Same file for all three methods, so they train on the same scenes.
+# RayRoPE / UniRoPE renormalize poses themselves; the file is set so that the same
+# scenes are dropped as in the SCoPE runs and all methods train on the same scenes.
 near_depth_json: /home/jhu/zzhan288/projects_rchella4/zzhan288/data/dl3dv_points/near_depth.json
 # Each query is fully black with probability nvs_ratio. The other queries draw
 # an integer dropout percent from min..max, which stops at 75 so they keep points.
@@ -89,6 +96,7 @@ panorama_train_manifests:
 # 10 JHU scenes held out of training; 20 sets spread over them per validation.
 panorama_val_manifests:
   - manifests/jhu_holdout10_seed20260822/jhu_test_2ref1_10_scenes.jsonl
+# Same scene set as the SCoPE runs (see near_depth_json).
 panorama_near_depth_json: /home/jhu/zzhan288/projects_rchella4/zzhan288/data/framecrafter_5input/near_depth.json
 panorama_image_size: [256, 512]
 
