@@ -1,0 +1,20 @@
+# The near-depth run's accelerate config. Its DeepSpeed file is the snapshot's with train_batch_size "auto" (= GPUs x 1 set),
+# so a smoke test can run on fewer GPUs; paths are relative to the repo root (the sbatch cwd).
+compute_environment: LOCAL_MACHINE
+debug: false
+deepspeed_config:
+  deepspeed_config_file: omnicrafter_scopeff/deepspeed_zero2.json
+  zero3_init_flag: false
+distributed_type: DEEPSPEED
+downcast_bf16: 'no'
+enable_cpu_affinity: false
+machine_rank: 0
+main_training_function: main
+num_machines: 1
+num_processes: 4
+rdzv_backend: static
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false

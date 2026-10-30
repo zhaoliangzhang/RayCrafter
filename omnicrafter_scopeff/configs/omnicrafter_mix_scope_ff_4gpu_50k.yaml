@@ -1,0 +1,60 @@
+# OmniCrafter (Wan2.1-I2V-14B + published FrameCrafter LoRA r32) + scope-ff, perspective + panorama.
+# 4xH100, ZeRO-2 bf16, one set per GPU (global batch 4), 50k steps.
+# Model / objective as omnicrafter_neardepth: per-frame VAE, neutral temporal RoPE, patch embedding cut
+# to its 36 image channels (no Pluecker concat), flow matching on the 3 query latents.
+# Camera / data / schedule as configs/flux3_mix_scope_ff.yaml: scope-ff is the only camera module
+# (7 + 48 Fourier + 1 patch-size inputs, 64-wide MLP, plucker_eps 1e-3, log-scale gate shift, no V
+# residual); poses are anchored on the nearest ref; translations are in near-depth units for both kinds.
+
+wan_root: /weka/projects/rchella4/zzhan288/FrameCrafter/models
+base_initialization: /weka/projects/rchella4/zzhan288/FrameCrafter/ckpt/framecrafter.safetensors
+lora_rank: 32
+lora_target_modules: q,k,v,o,ffn.0,ffn.2
+
+scope_dir_freqs: 8
+scope_patch_size: true
+scope_mlp_hidden: 64
+sort_refs_by_distance: true
+
+learning_rate: 1.0e-5
+weight_decay: 0.01
+warmup_steps: 500
+max_steps: 50000
+time_limit_hours: 71.5
+seed: 20261030
+
+# Same files as the flux3 mix runs, through the paths dli90 can read.
+near_depth_json: /weka/projects/rchella4/zzhan288/data/dl3dv_points/near_depth.json
+# Each query is fully black with probability nvs_ratio. The other queries draw
+# an integer dropout percent from min..max, which stops at 75 so they keep points.
+min_pixel_dropout: 0.0
+max_pixel_dropout: 0.75
+nvs_ratio: 0.5
+train_shards: /weka/projects/rchella4/zzhan288/data/dl3dv_points/train
+val_shards: /weka/projects/rchella4/zzhan288/data/dl3dv_points/test
+image_size: [288, 512]
+num_workers: 1
+
+panorama_ratio: 0.5
+panorama_root: /weka/projects/rchella4/zzhan288/data/framecrafter_5input
+panorama_train_manifests:
+  - manifests/hm3d_train_cleanup_q1.jsonl
+  - manifests/jhu_holdout10_seed20260822/jhu_train_2ref1_excluding_10_scenes.jsonl
+# 10 JHU scenes held out of training.
+panorama_val_manifests:
+  - manifests/jhu_holdout10_seed20260822/jhu_test_2ref1_10_scenes.jsonl
+panorama_near_depth_json: /weka/projects/rchella4/zzhan288/data/framecrafter_5input/near_depth.json
+panorama_image_size: [256, 512]
+
+# 10 dl3dv_points test + 10 JHU held-out sets, each as cleanup and NVS, at 3 timesteps.
+val_sets: 10
+val_t_indices: [250, 500, 750]
+
+output_dir: /weka/projects/rchella4/dli90/omnicrafter_outputs/omnicrafter_mix_scope_ff_4gpu_50k
+log_interval: 10
+val_interval: 500
+save_interval: 10000
+resume_interval: 2000
+use_wandb: true
+wandb_project: raycrafter
+wandb_run_name: omnicrafter_mix_scope_ff_4gpu_50k
