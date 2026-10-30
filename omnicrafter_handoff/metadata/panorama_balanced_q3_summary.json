@@ -1,0 +1,48 @@
+{
+  "available_scenes": {
+    "HM3D": 3552,
+    "JHU": 148
+  },
+  "black_inputs": "not stored; generated only by online 2D augmentation",
+  "dataset_ratio": "HM3D:JHU = 1:1 exactly",
+  "format_version": 1,
+  "heldout_jhu_scenes": [
+    "06_AMR1_pw_000000-000066",
+    "10_AMES_pw_000029-000079",
+    "24_Clark_ps_000060-000116",
+    "24_Clark_pw_000142-000198",
+    "27_Dunning_pw_000105-000148",
+    "34_Hackerman_pw_000000-000070",
+    "35_Hodson_pw_000071-000130",
+    "49_Levering_pw_000065-000098",
+    "99_pano_p2_002000-002199",
+    "99_pano_p4_000800-000999"
+  ],
+  "heldout_scene_leakage": false,
+  "heldout_scenes_manifest": "/cis/net/io80/data/xliu253/framecrafter/5input_model/manifests/jhu_holdout10_seed20260822/heldout_scenes.json",
+  "image_storage": "no-copy paths into the existing 5input_model tree",
+  "logical_sets": 464848,
+  "ordering": "1 HM3D group(s), then one JHU group",
+  "output": "/cis/net/io81/data/xliu253/framecrafter/OC_2ref3_250000_hm3d_jhu_cleanup_nvs_256x512_continue/data_manifest/train.jsonl",
+  "queries_per_set": 3,
+  "rows": 1394544,
+  "seed": 20260905,
+  "selected_groups": {
+    "HM3D": 232424,
+    "JHU": 232424
+  },
+  "selected_rows": {
+    "HM3D": 697272,
+    "JHU": 697272
+  },
+  "sha256": "f0f6174795fef9e26848b6cadcbf470102e113c1dedb59aa64cf238086163c17",
+  "source_groups": {
+    "HM3D": 249000,
+    "JHU": 232424
+  },
+  "source_manifests": {
+    "HM3D": "/cis/net/io80/data/xliu253/framecrafter/5input_model/manifests/hm3d_train.jsonl",
+    "JHU": "/cis/net/io80/data/xliu253/framecrafter/5input_model/manifests/jhu_holdout10_seed20260822/jhu_train_2ref1_excluding_10_scenes.jsonl"
+  },
+  "task": "2 clean references + 3 stored noisy-render queries -> 3 clean targets"
+}

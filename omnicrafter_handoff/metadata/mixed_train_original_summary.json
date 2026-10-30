@@ -1,0 +1,62 @@
+{
+  "black_images_stored": false,
+  "copies_of_source_images": 0,
+  "dataset_counts": {
+    "DL3DV": 100000,
+    "HM3D": 60000,
+    "JHU": 40000
+  },
+  "image_validation": "all selected images are nonempty readable regular files; PNG headers/dimensions checked for every scene plus deterministic 1% sets; real-data smoke fully decodes examples",
+  "jhu_heldout_scenes_excluded": true,
+  "logical_sets": 200000,
+  "offsets_sha256": "f7c197a1f42e82b83dd38043deae2394ae06a9eeb0986edcf4a7279518d41598",
+  "panorama_scene_balance": "all training scene/sequence folders, without replacement",
+  "perspective_repeated_entries": 2293,
+  "perspective_unique_sets": 97707,
+  "pose_convention": "OpenCV world-to-camera",
+  "projection_counts": {
+    "panorama": 100000,
+    "perspective": 100000
+  },
+  "queries_per_set": 3,
+  "query_images": 600000,
+  "references_per_set": 2,
+  "resolutions_width_height": {
+    "panorama": [
+      512,
+      256
+    ],
+    "perspective": [
+      512,
+      288
+    ]
+  },
+  "seed": 20261023,
+  "sha256": "b5b02c967c6f1ec210980ec36a7c89bd34d68a877cf5530c4e16dcc5e4c8a71c",
+  "source_sha256": {
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/benchmark/manifest.json": "406a0a7341ae47e0b2800b25da60afae695bd191cc46ea8a2f814e103cb66eb4",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/configuration_shard_00.json": "dd55a49aca3b39533bdcaf9699e15fd9e13617188a9fa4f8a303c5f274b8d113",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/configuration_shard_01.json": "4952c95a2d961fbe0a7affb4027900a5a8200b3cef04c4cff4dc593aa81c565d",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/configuration_shard_02.json": "22061ad90b0ea2cbac072d093cb67ac481c59cff20bf6f17461e88d611884a6e",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/configuration_shard_03.json": "0079c94a8b6904a66f3b9d5fb80f97acf4cf60eab92d2d4932ac105d3c639c74",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/configuration_shard_04.json": "1b6c94626846389f9c44b7f94dbf0b89814db0f7dea0a2d2645ced06bbbd1e33",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/configuration_shard_05.json": "69f16b2af504bf215975e68d59d062314782e62f5a5bb2afa96760ca6409f393",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/configuration_shard_06.json": "f7baff0ab289f50f3c69c6c2d2505a68ea140ae297c5d0978b38b2a34f2700c7",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/configuration_shard_07.json": "b55e8c641a29fcef05137c48ec8a065a2b230af7e2d3e0d2e10411adb2ceee0e",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/progress_shard_00.jsonl": "8b190bcf728d29a37f1308479c6d9c646f1ac22826607212419493b0e2bad32e",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/progress_shard_01.jsonl": "02dcaeca9679e7d97d3ff948fec39676be5230933ef3f2f4471b2f6dc2a3cb42",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/progress_shard_02.jsonl": "bdd6ea57f24d1696939066332be0b2faa58e4ab113a4bf3a7cbff3039e3706e2",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/progress_shard_03.jsonl": "133ff66800f112d77a1d06bb1dbf1d14b74370b83bdeed7d9c0fc98898d8fabd",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/progress_shard_04.jsonl": "337c7f5047c9ddc692db2fb8e46f8f503034b56b26399675644eb7f6185229e8",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/progress_shard_05.jsonl": "a72889a1cc531a415b3ac592fe16ab47166ebe8afdaa1d5195e909e11cb0b977",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/progress_shard_06.jsonl": "3adfeb89a760a4f30a26734c1f2e429be33259d80522020fda6deb4291883fa7",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/progress_shard_07.jsonl": "830c60f3e7306244d8c4c922b659a99fd9bb65bfaf7a0b7e9f6e1d818a2fa9ac",
+    "/cis/home/ayadav/wriva_runtimes_all/for_Zhaoliang/dl3dv_points/train/priors/run_contract.json": "d1a57e1808a6d7fc7fc276f8f55171cb1a99245a30c8be1af4cf13a473fd9d43",
+    "/cis/net/io80/data/xliu253/framecrafter/5input_model/manifests/hm3d_train.jsonl": "362edf2c1358c2bad162efe05d76e65c21743cf97c8a6ce58bafac26217d026f",
+    "/cis/net/io80/data/xliu253/framecrafter/5input_model/manifests/jhu_holdout10_seed20260822/heldout_scenes.json": "34d10002b95e12512bff4ce61ae7ca5ab18c00cdd15396cd375c980f80b84158",
+    "/cis/net/io80/data/xliu253/framecrafter/5input_model/manifests/jhu_holdout10_seed20260822/jhu_train_2ref1_excluding_10_scenes.jsonl": "f3261e96fc7a91bcec427b30f6bfbad64972879e161e2fc7a4ef4c738ecb3f1e",
+    "/cis/net/io80/data/xliu253/framecrafter/5input_model/poses/manifest.json": "7f3051f1546a54d9518af5f9ecbcddf5a6d3549eae74dbfb7b0ab2112971ef3e"
+  },
+  "time": "2026-10-23T23:24:57-04:00",
+  "validation_used_for_training": false
+}

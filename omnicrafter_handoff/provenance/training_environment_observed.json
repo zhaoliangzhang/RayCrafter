@@ -1,0 +1,18 @@
+{
+  "observed_on": "io95, using the shared framecrafter environment; 2026-10-28",
+  "python_environment": "/cis/home/xliu253/micromamba/envs/framecrafter",
+  "versions": {
+    "torch": "2.8.0+cu128",
+    "torchvision": "0.23.0+cu128",
+    "accelerate": "1.14.0",
+    "deepspeed": "0.19.5",
+    "transformers": "5.15.1",
+    "peft": "0.20.0",
+    "numpy": "2.4.6",
+    "Pillow": "12.3.0",
+    "safetensors": "0.8.0",
+    "opencv-python": "5.0.0.93",
+    "einops": "0.8.2"
+  },
+  "scope": "Observed package metadata, not a complete dependency lock or a fresh install test"
+}

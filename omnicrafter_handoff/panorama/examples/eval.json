@@ -1,0 +1,15 @@
+{
+  "pose_convention": "w2c_opencv",
+  "sets": [{
+    "id": "demo_set",
+    "references": [
+      {"image": "images/000000.png", "w2c": [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]},
+      {"image": "images/000004.png", "w2c": [[1,0,0,-1],[0,1,0,0],[0,0,1,0],[0,0,0,1]]}
+    ],
+    "targets": [
+      {"image": "images/000001.png", "noisy_image": "noisy/000001.png", "w2c": [[1,0,0,-0.25],[0,1,0,0],[0,0,1,0],[0,0,0,1]]},
+      {"image": "images/000002.png", "noisy_image": "noisy/000002.png", "w2c": [[1,0,0,-0.50],[0,1,0,0],[0,0,1,0],[0,0,0,1]]},
+      {"image": "images/000003.png", "noisy_image": "noisy/000003.png", "w2c": [[1,0,0,-0.75],[0,1,0,0],[0,0,1,0],[0,0,0,1]]}
+    ]
+  }]
+}

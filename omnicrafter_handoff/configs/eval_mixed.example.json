@@ -1,0 +1,12 @@
+{
+  "manifest": "/scratch/YOUR_USER/omnicrafter/eval_manifest/manifest.json",
+  "checkpoint": "/scratch/YOUR_USER/omnicrafter/weights/step-50000.safetensors",
+  "output": "/scratch/YOUR_USER/omnicrafter/evaluations/step50000_matched",
+  "wan_root": "/scratch/YOUR_USER/omnicrafter/weights/wan21",
+  "cache_dir": "/scratch/YOUR_USER/omnicrafter/eval_weight_cache",
+  "dreamsim_cache": "/scratch/YOUR_USER/omnicrafter/weights/dreamsim",
+  "fid_weights": "/scratch/YOUR_USER/omnicrafter/weights/inception-2015-12-05.pt",
+  "torch_home": "/scratch/YOUR_USER/omnicrafter/weights/torch_cache",
+  "metric_python": "/scratch/YOUR_USER/envs/omnicrafter_metrics/bin/python",
+  "num_gpus": 4
+}

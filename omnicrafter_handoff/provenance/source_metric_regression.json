@@ -1,0 +1,24 @@
+{
+  "errors": {
+    "dreamsim": 1.1920928955078125e-07,
+    "lpips": 1.5497207641601562e-06,
+    "psnr": 0.0,
+    "ssim": 0.0
+  },
+  "fid_identity": 0.0,
+  "fid_weights_sha256": "f58cb9b6ec323ed63459aa4fb441fe750cfe39fafad6da5cb504a16f19e958f4",
+  "passed": true,
+  "time": "2026-10-28T02:11:59-04:00",
+  "versions": {
+    "clean-fid": "0.1.35",
+    "dreamsim": "0.2.1",
+    "lpips": "0.1.4",
+    "numpy": "1.26.4",
+    "peft": "0.13.2",
+    "scikit-image": "0.25.2",
+    "timm": "0.6.13",
+    "torch": "2.4.0+cu118",
+    "torchvision": "0.19.0+cu118",
+    "transformers": "4.44.2"
+  }
+}

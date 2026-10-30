@@ -1,0 +1,8 @@
+# Optional, preferably in a separate environment. Model weights download on first use.
+numpy
+Pillow
+scikit-image
+torch
+torchvision
+lpips
+dreamsim

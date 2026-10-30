@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.cache/
+.venv/
+*.egg-info/
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+data/
+outputs/
+weights/
+toy_data/

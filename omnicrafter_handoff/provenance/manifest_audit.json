@@ -1,0 +1,30 @@
+{
+  "eval_counts": {
+    "DL3DV": 2800,
+    "HM3D": 423,
+    "JHU": 500,
+    "Replica": 68
+  },
+  "eval_targets_per_task": 11373,
+  "exact_scene_name_overlap": false,
+  "jhu_heldout_excluded": true,
+  "reference_overlap_targets": {
+    "DL3DV": 0,
+    "HM3D": 21,
+    "JHU": 0,
+    "Replica": 0
+  },
+  "scope": "Metadata only; not a proof of physical-location disjointness or valid image copies",
+  "train_counts": {
+    "DL3DV": 100000,
+    "HM3D": 60000,
+    "JHU": 40000
+  },
+  "train_scene_sequence_counts": {
+    "DL3DV": 979,
+    "HM3D": 3552,
+    "JHU": 148,
+    "Replica": 0
+  },
+  "training_uncompressed_sha256": "1020aff9922494cc44ea9204740faab0814ac0b823ed0aac404d6ef81f04a184"
+}

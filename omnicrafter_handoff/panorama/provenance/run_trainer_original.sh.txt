@@ -1,0 +1,445 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Large-scale continuation of FrameCrafter Model 2 (RGB render-query model).
+# The controller detects all currently idle GPUs, tries the requested five-slot
+# 2-reference/3-query layout first, and retries with 2 then 1 query only after a
+# confirmed CUDA OOM.  Validation metadata is deliberately never passed to the
+# trainer, so val.json remains evaluation-only.
+
+ROOT="${PANORAMA_NVS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+REPO="${ROOT}/third_party/FrameCrafter"
+ENV_DIR="${FRAMECRAFTER_ENV:-/cis/home/xliu253/micromamba/envs/framecrafter}"
+WAN_ROOT="${WAN_ROOT:-${ROOT}/checkpoints/wan21}"
+MODEL_DIR="${WAN_ROOT}/Wan-AI/Wan2.1-I2V-14B-480P"
+TOKENIZER="${WAN_ROOT}/Wan-AI/Wan2.1-T2V-1.3B/google/umt5-xxl"
+DATA="${FRAMECRAFTER_DATA:-/cis/net/io80/data/xliu253/framecrafter/5input_model}"
+TRAIN_METADATA="${TRAIN_METADATA:-${DATA}/train.json}"
+POSES="${POSE_MANIFEST:-${DATA}/poses/manifest.json}"
+AUDIT_SUMMARY="${AUDIT_SUMMARY:-${DATA}/audit_summary.json}"
+INIT_CHECKPOINT="${INIT_CHECKPOINT:-${ROOT}/weights/render_query/step-13800.safetensors}"
+START_FROM_SCRATCH="${START_FROM_SCRATCH:-0}"
+OUTPUT_BASE="${OUTPUT_BASE:-${DATA}/training/model2_large_100epochs}"
+NUM_EPOCHS="${NUM_EPOCHS:-100}"
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-1}"
+SAVE_STEPS="${SAVE_STEPS:-5000}"
+HEIGHT="${HEIGHT:-256}"
+WIDTH="${WIDTH:-512}"
+QUERY_ATTEMPTS="${QUERY_ATTEMPTS:-3 2 1}"
+ACCELERATE_CONFIG_FILE="${ACCELERATE_CONFIG_FILE:-model_training/two_gpu_bf16.yaml}"
+MIXED_PRECISION="${MIXED_PRECISION:-bf16}"
+MEMORY_REPORT_STEPS="${MEMORY_REPORT_STEPS:-100}"
+REPORT_SUFFIX="${REPORT_SUFFIX:-}"
+SKIP_FINAL_CHECKPOINT="${SKIP_FINAL_CHECKPOINT:-0}"
+INITIAL_GLOBAL_STEP="${INITIAL_GLOBAL_STEP:-0}"
+MIN_QUERY_PIXEL_DROPOUT="${MIN_QUERY_PIXEL_DROPOUT:-0.00}"
+MAX_QUERY_PIXEL_DROPOUT="${MAX_QUERY_PIXEL_DROPOUT:-1.00}"
+NVS_PROBABILITY="${NVS_PROBABILITY:-0.0}"
+NVS_RATIO="${NVS_RATIO:-0.0}"
+DRY_RUN="${DRY_RUN:-0}"
+
+if [[ "${START_FROM_SCRATCH}" != "0" && "${START_FROM_SCRATCH}" != "1" ]]; then
+  echo "START_FROM_SCRATCH must be 0 or 1, got: ${START_FROM_SCRATCH}" >&2
+  exit 2
+fi
+if [[ "${START_FROM_SCRATCH}" == "1" ]]; then
+  INIT_CHECKPOINT=""
+fi
+
+for required in \
+  "${ENV_DIR}/bin/python" \
+  "${TRAIN_METADATA}" \
+  "${POSES}" \
+  "${AUDIT_SUMMARY}"; do
+  if [[ ! -e "${required}" ]]; then
+    echo "Required path does not exist: ${required}" >&2
+    exit 1
+  fi
+done
+
+if [[ -n "${INIT_CHECKPOINT}" && ! -e "${INIT_CHECKPOINT}" ]]; then
+  echo "Required initialization checkpoint does not exist: ${INIT_CHECKPOINT}" >&2
+  exit 1
+fi
+
+for value_name in NUM_EPOCHS TRAIN_BATCH_SIZE SAVE_STEPS HEIGHT WIDTH MEMORY_REPORT_STEPS; do
+  value="${!value_name}"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]] || (( value < 1 )); then
+    echo "${value_name} must be a positive integer, got: ${value}" >&2
+    exit 2
+  fi
+done
+if (( WIDTH != 2 * HEIGHT || HEIGHT % 16 != 0 || WIDTH % 16 != 0 )); then
+  echo "Resolution must be a 2:1 panorama with both dimensions divisible by 16; got ${HEIGHT}x${WIDTH}." >&2
+  exit 2
+fi
+if [[ -n "${MAX_TRAIN_STEPS:-}" && ! "${MAX_TRAIN_STEPS}" =~ ^[0-9]+$ ]]; then
+  echo "MAX_TRAIN_STEPS must be a non-negative integer, got: ${MAX_TRAIN_STEPS}" >&2
+  exit 2
+fi
+if [[ ! "${INITIAL_GLOBAL_STEP}" =~ ^[0-9]+$ ]]; then
+  echo "INITIAL_GLOBAL_STEP must be a non-negative integer, got: ${INITIAL_GLOBAL_STEP}" >&2
+  exit 2
+fi
+if [[ -n "${MAX_TRAIN_STEPS:-}" ]] \
+  && (( MAX_TRAIN_STEPS <= INITIAL_GLOBAL_STEP )); then
+  echo "MAX_TRAIN_STEPS must exceed INITIAL_GLOBAL_STEP; got ${MAX_TRAIN_STEPS} and ${INITIAL_GLOBAL_STEP}." >&2
+  exit 2
+fi
+if [[ "${SKIP_FINAL_CHECKPOINT}" != "0" && "${SKIP_FINAL_CHECKPOINT}" != "1" ]]; then
+  echo "SKIP_FINAL_CHECKPOINT must be 0 or 1, got: ${SKIP_FINAL_CHECKPOINT}" >&2
+  exit 2
+fi
+if [[ ! "${REPORT_SUFFIX}" =~ ^[A-Za-z0-9_.-]*$ ]]; then
+  echo "REPORT_SUFFIX contains unsupported characters: ${REPORT_SUFFIX}" >&2
+  exit 2
+fi
+"${ENV_DIR}/bin/python" - \
+  "${MIN_QUERY_PIXEL_DROPOUT}" \
+  "${MAX_QUERY_PIXEL_DROPOUT}" \
+  "${NVS_PROBABILITY}" \
+  "${NVS_RATIO}" <<'PY'
+import sys
+
+minimum, maximum, nvs_probability, nvs_ratio = map(float, sys.argv[1:])
+if not 0.0 <= minimum <= maximum <= 1.0:
+    raise SystemExit(
+        "query dropout must satisfy 0 <= min <= max <= 1; "
+        f"got min={minimum}, max={maximum}"
+    )
+if not 0.0 <= nvs_probability <= 1.0:
+    raise SystemExit(
+        f"NVS_PROBABILITY must be in [0, 1], got {nvs_probability}"
+    )
+if not 0.0 <= nvs_ratio <= 1.0:
+    raise SystemExit(f"NVS_RATIO must be in [0, 1], got {nvs_ratio}")
+if nvs_probability > 0.0 and nvs_ratio > 0.0:
+    raise SystemExit(
+        "NVS_PROBABILITY (sample-level) and NVS_RATIO (query-level) "
+        "cannot both be enabled"
+    )
+PY
+
+if [[ -n "${GPU_LIST:-}" ]]; then
+  SELECTED_GPUS="${GPU_LIST}"
+else
+  SELECTED_GPUS="$(${ENV_DIR}/bin/python - <<'PY'
+import subprocess
+
+gpu_lines = subprocess.check_output(
+    [
+        "nvidia-smi",
+        "--query-gpu=index,uuid,memory.total,memory.used",
+        "--format=csv,noheader,nounits",
+    ],
+    text=True,
+).splitlines()
+try:
+    app_lines = subprocess.check_output(
+        [
+            "nvidia-smi",
+            "--query-compute-apps=gpu_uuid,pid",
+            "--format=csv,noheader,nounits",
+        ],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    ).splitlines()
+except subprocess.CalledProcessError:
+    app_lines = []
+busy = {
+    line.split(",", 1)[0].strip()
+    for line in app_lines
+    if line.strip().startswith("GPU-") and "," in line
+}
+free = []
+for line in gpu_lines:
+    index, uuid, total, used = (field.strip() for field in line.split(","))
+    # A display driver can retain a small allocation without a compute PID.
+    # Exclude every GPU with a compute process and require <=1 GiB residual use.
+    if uuid not in busy and int(used) <= 1024:
+        free.append(index)
+print(",".join(free))
+PY
+)"
+fi
+
+if [[ -z "${SELECTED_GPUS}" ]]; then
+  echo "No free GPU is available on $(hostname)" >&2
+  exit 2
+fi
+IFS=',' read -r -a GPU_ARRAY <<<"${SELECTED_GPUS}"
+NUM_PROCESSES="${#GPU_ARRAY[@]}"
+if (( NUM_PROCESSES < 1 )); then
+  echo "Could not parse GPU list: ${SELECTED_GPUS}" >&2
+  exit 2
+fi
+
+MODEL_PATHS="$(${ENV_DIR}/bin/python - "${MODEL_DIR}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+paths = [[str(path) for path in sorted(root.glob("diffusion_pytorch_model-*.safetensors"))]]
+paths.extend(
+    str(root / name)
+    for name in (
+        "models_t5_umt5-xxl-enc-bf16.pth",
+        "Wan2.1_VAE.pth",
+        "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth",
+    )
+)
+print(json.dumps(paths))
+PY
+)"
+
+mkdir -p "${OUTPUT_BASE}" "${OUTPUT_BASE}/logs"
+CONTROLLER_LOG="${OUTPUT_BASE}/logs/controller.log"
+GPU_INVENTORY="${OUTPUT_BASE}/logs/gpus_at_launch.txt"
+TRAIN_LOGICAL_SETS="${TRAIN_LOGICAL_SETS:-$(${ENV_DIR}/bin/python - "${AUDIT_SUMMARY}" <<'PY'
+import json
+import sys
+
+audit = json.load(open(sys.argv[1]))
+print(audit["manifests"]["train"]["logical_sets"])
+PY
+)}"
+GLOBAL_SAMPLES_PER_STEP=$((NUM_PROCESSES * TRAIN_BATCH_SIZE))
+STEPS_PER_EPOCH=$((
+  (TRAIN_LOGICAL_SETS + GLOBAL_SAMPLES_PER_STEP - 1) / GLOBAL_SAMPLES_PER_STEP
+))
+TOTAL_TRAINING_STEPS=$(( STEPS_PER_EPOCH * NUM_EPOCHS ))
+TARGET_GLOBAL_STEP=$(( INITIAL_GLOBAL_STEP + TOTAL_TRAINING_STEPS ))
+if [[ -n "${MAX_TRAIN_STEPS:-}" ]] \
+  && (( MAX_TRAIN_STEPS > 0 )) \
+  && (( MAX_TRAIN_STEPS < TARGET_GLOBAL_STEP )); then
+  TARGET_GLOBAL_STEP="${MAX_TRAIN_STEPS}"
+fi
+EFFECTIVE_TRAINING_STEPS=$(( TARGET_GLOBAL_STEP - INITIAL_GLOBAL_STEP ))
+PERIODIC_CHECKPOINT_COUNT=$((
+  TARGET_GLOBAL_STEP / SAVE_STEPS - INITIAL_GLOBAL_STEP / SAVE_STEPS
+))
+if [[ "${SKIP_FINAL_CHECKPOINT}" == "1" ]]; then
+  # Only periodic checkpoints remain when the end-of-training save is disabled.
+  CHECKPOINT_COUNT="${PERIODIC_CHECKPOINT_COUNT}"
+elif (( TARGET_GLOBAL_STEP % SAVE_STEPS == 0 )); then
+  CHECKPOINT_COUNT="${PERIODIC_CHECKPOINT_COUNT}"
+else
+  CHECKPOINT_COUNT=$(( PERIODIC_CHECKPOINT_COUNT + 1 ))
+fi
+if [[ -n "${INIT_CHECKPOINT}" ]]; then
+  CHECKPOINT_BYTES="$(stat -c '%s' "${INIT_CHECKPOINT}")"
+else
+  # Model 2 checkpoints contain LoRA weights plus the trainable 420-channel
+  # patch embedding. Existing checkpoints are 324,015,208 bytes.
+  CHECKPOINT_BYTES="${CHECKPOINT_ESTIMATED_BYTES:-324015208}"
+fi
+PROJECTED_CHECKPOINT_BYTES=$(( CHECKPOINT_COUNT * CHECKPOINT_BYTES ))
+OUTPUT_FREE_BYTES="$(df -PB1 "${OUTPUT_BASE}" | awk 'NR==2 {print $4}')"
+nvidia-smi --query-gpu=index,name,uuid,memory.total,memory.used,utilization.gpu \
+  --format=csv,noheader >"${GPU_INVENTORY}"
+
+{
+  echo "host=$(hostname)"
+  echo "task=FrameCrafter Model 2 large-scale continuation"
+  echo "data=${DATA}"
+  echo "training_metadata=${TRAIN_METADATA}"
+  echo "validation_metadata=RESERVED_NOT_LOADED"
+  if [[ -n "${INIT_CHECKPOINT}" ]]; then
+    echo "initialization=${INIT_CHECKPOINT}"
+  else
+    echo "initialization=WAN_PRETRAINED_PLUS_RANDOM_MODEL2_LORA_AND_PATCH_EMBEDDING"
+  fi
+  echo "selected_gpus=${SELECTED_GPUS}"
+  echo "num_processes=${NUM_PROCESSES}"
+  echo "train_batch_size_per_gpu=${TRAIN_BATCH_SIZE}"
+  echo "global_batch_size=$((GLOBAL_SAMPLES_PER_STEP * ${GRADIENT_ACCUMULATION_STEPS:-1}))"
+  echo "num_epochs=${NUM_EPOCHS}"
+  echo "save_steps=${SAVE_STEPS}"
+  echo "resolution=${HEIGHT}x${WIDTH}"
+  echo "train_logical_sets=${TRAIN_LOGICAL_SETS}"
+  echo "steps_per_epoch=${STEPS_PER_EPOCH}"
+  echo "total_training_steps=${TOTAL_TRAINING_STEPS}"
+  echo "initial_global_step=${INITIAL_GLOBAL_STEP}"
+  echo "target_global_step=${TARGET_GLOBAL_STEP}"
+  echo "effective_training_steps=${EFFECTIVE_TRAINING_STEPS}"
+  echo "projected_checkpoint_count=${CHECKPOINT_COUNT}"
+  echo "projected_checkpoint_bytes=${PROJECTED_CHECKPOINT_BYTES}"
+  echo "output_free_bytes_at_launch=${OUTPUT_FREE_BYTES}"
+  echo "query_attempts=${QUERY_ATTEMPTS}"
+  echo "accelerate_config=${ACCELERATE_CONFIG_FILE}"
+  echo "mixed_precision=${MIXED_PRECISION}"
+  echo "gradient_checkpointing_offload=${GRADIENT_CHECKPOINTING_OFFLOAD:-0}"
+  echo "min_query_pixel_dropout=${MIN_QUERY_PIXEL_DROPOUT}"
+  echo "max_query_pixel_dropout=${MAX_QUERY_PIXEL_DROPOUT}"
+  echo "nvs_probability=${NVS_PROBABILITY}"
+  echo "nvs_ratio=${NVS_RATIO}"
+  echo "memory_report_steps=${MEMORY_REPORT_STEPS}"
+  echo "report_suffix=${REPORT_SUFFIX}"
+  echo "skip_final_checkpoint=${SKIP_FINAL_CHECKPOINT}"
+  echo "pytorch_cuda_alloc_conf=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+  date --iso-8601=seconds
+} | tee -a "${CONTROLLER_LOG}"
+
+if (( PROJECTED_CHECKPOINT_BYTES > OUTPUT_FREE_BYTES )); then
+  echo "WARNING: projected checkpoints exceed current output free space" \
+    | tee -a "${CONTROLLER_LOG}" >&2
+fi
+
+cd "${REPO}"
+export CUDA_VISIBLE_DEVICES="${SELECTED_GPUS}"
+export PYTHONUNBUFFERED=1
+export TOKENIZERS_PARALLELISM=false
+export WANDB_MODE=disabled
+export TQDM_MININTERVAL="${TQDM_MININTERVAL:-30}"
+# The A40 attempts can leave hundreds of MiB reserved in small, unusable
+# fragments.  Expandable segments let PyTorch reuse that memory for the next
+# allocation instead of failing with only a few dozen MiB requested.
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
+CHECKPOINTING_ARGS=(--use_gradient_checkpointing)
+if [[ "${GRADIENT_CHECKPOINTING_OFFLOAD:-0}" == "1" ]]; then
+  CHECKPOINTING_ARGS=(--use_gradient_checkpointing_offload)
+fi
+
+CURRENT_INIT="${INIT_CHECKPOINT}"
+for QUERY_SLOTS in ${QUERY_ATTEMPTS}; do
+  # A fixed path is useful for single-layout continuation branches.  Preserve
+  # the historical per-query subdirectory layout unless explicitly overridden.
+  RUN="${QUERY_OUTPUT_DIR:-${OUTPUT_BASE}/queries_${QUERY_SLOTS}}"
+  REPORTS="${RUN}/reports"
+  LOG="${OUTPUT_BASE}/logs/queries_${QUERY_SLOTS}.log"
+  mkdir -p "${RUN}" "${REPORTS}"
+  ATTEMPT_INIT="${CURRENT_INIT}"
+  LATEST_EXISTING="$(find "${RUN}" -maxdepth 1 -type f -name 'step-*.safetensors' -print0 \
+    | sort -zV | tail -z -n 1 | tr -d '\0')"
+  if [[ -n "${LATEST_EXISTING}" ]]; then
+    ATTEMPT_INIT="${LATEST_EXISTING}"
+  fi
+  MAIN_PORT="$(${ENV_DIR}/bin/python - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(("", 0))
+    print(sock.getsockname()[1])
+PY
+)"
+
+  {
+    echo "attempt_query_slots=${QUERY_SLOTS}"
+    echo "attempt_initialization=${ATTEMPT_INIT}"
+    echo "main_process_port=${MAIN_PORT}"
+    date --iso-8601=seconds
+  } | tee -a "${CONTROLLER_LOG}" "${LOG}"
+
+  EXTRA_STEP_ARGS=()
+  if [[ -n "${MAX_TRAIN_STEPS:-}" ]] && (( MAX_TRAIN_STEPS > 0 )); then
+    EXTRA_STEP_ARGS+=(--max_train_steps "${MAX_TRAIN_STEPS}")
+  fi
+  CHECKPOINT_SAVE_ARGS=()
+  if [[ "${SKIP_FINAL_CHECKPOINT}" == "1" ]]; then
+    CHECKPOINT_SAVE_ARGS+=(--skip_final_checkpoint)
+  fi
+  RESUME_ARGS=()
+  if [[ -n "${ATTEMPT_INIT}" ]]; then
+    RESUME_ARGS+=(--resume_checkpoint "${ATTEMPT_INIT}")
+  fi
+
+  TRAIN_COMMAND=(
+    "${ENV_DIR}/bin/python" -m accelerate.commands.launch
+    --config_file "${ACCELERATE_CONFIG_FILE}" \
+    --mixed_precision "${MIXED_PRECISION}" \
+    --num_processes "${NUM_PROCESSES}" \
+    --main_process_port "${MAIN_PORT}" \
+    -m model_training.train_pose_conditioned_render_queries \
+    --dataset_base_path "${DATA}" \
+    --dataset_metadata_path "${TRAIN_METADATA}" \
+    --pose_manifest_path "${POSES}" \
+    --height "${HEIGHT}" \
+    --width "${WIDTH}" \
+    --dataset_repeat 1 \
+    --num_dataset_samples 0 \
+    --dataset_num_workers 0 \
+    --stream_metadata \
+    --max_query_slots "${QUERY_SLOTS}" \
+    --min_query_pixel_dropout "${MIN_QUERY_PIXEL_DROPOUT}" \
+    --max_query_pixel_dropout "${MAX_QUERY_PIXEL_DROPOUT}" \
+    --nvs_probability "${NVS_PROBABILITY}" \
+    --nvs_ratio "${NVS_RATIO}" \
+    --model_paths "${MODEL_PATHS}" \
+    --tokenizer_path "${TOKENIZER}" \
+    --learning_rate 1e-5 \
+    --weight_decay 0.01 \
+    --num_epochs "${NUM_EPOCHS}" \
+    --train_batch_size "${TRAIN_BATCH_SIZE}" \
+    --initial_global_step "${INITIAL_GLOBAL_STEP}" \
+    --save_steps "${SAVE_STEPS}" \
+    --memory_report_steps "${MEMORY_REPORT_STEPS}" \
+    --memory_report_path "${REPORTS}/memory${REPORT_SUFFIX}.jsonl" \
+    --loss_report_path "${REPORTS}/train_loss${REPORT_SUFFIX}.jsonl" \
+    --remove_prefix_in_ckpt "pipe.dit." \
+    --output_path "${RUN}" \
+    --lora_base_model dit \
+    --lora_target_modules "q,k,v,o,ffn.0,ffn.2" \
+    --lora_rank 32 \
+    "${RESUME_ARGS[@]}" \
+    --extra_inputs conditioning_images \
+    --modify_channels \
+    --new_in_dim 420 \
+    --gradient_accumulation_steps 1 \
+    --initialize_model_on_cpu \
+    --individual_encoding \
+    "${CHECKPOINTING_ARGS[@]}" \
+    "${CHECKPOINT_SAVE_ARGS[@]}" \
+    "${EXTRA_STEP_ARGS[@]}"
+  )
+
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    echo "Dry run; training was not started. Command:" | tee -a "${CONTROLLER_LOG}"
+    printf '%q ' "${TRAIN_COMMAND[@]}" | tee -a "${CONTROLLER_LOG}"
+    printf '\n' | tee -a "${CONTROLLER_LOG}"
+    exit 0
+  fi
+
+  set +e
+  "${TRAIN_COMMAND[@]}" 2>&1 | tee -a "${LOG}"
+  STATUS=${PIPESTATUS[0]}
+  set -e
+
+  if (( STATUS == 0 )); then
+    {
+      echo "training_exit=success"
+      echo "successful_query_slots=${QUERY_SLOTS}"
+      date --iso-8601=seconds
+    } | tee -a "${CONTROLLER_LOG}"
+    exit 0
+  fi
+
+  if grep -Eiq \
+    'CUDA out of memory|torch\.OutOfMemoryError|CUBLAS_STATUS_ALLOC_FAILED|CUDA error: out of memory' \
+    "${LOG}"; then
+    {
+      echo "training_exit=cuda_oom"
+      echo "failed_query_slots=${QUERY_SLOTS}"
+      echo "status=${STATUS}"
+      date --iso-8601=seconds
+    } | tee -a "${CONTROLLER_LOG}"
+    LATEST_FAILED="$(find "${RUN}" -maxdepth 1 -type f -name 'step-*.safetensors' -print0 \
+      | sort -zV | tail -z -n 1 | tr -d '\0')"
+    if [[ -n "${LATEST_FAILED}" ]]; then
+      CURRENT_INIT="${LATEST_FAILED}"
+      echo "next_attempt_initialization=${CURRENT_INIT}" | tee -a "${CONTROLLER_LOG}"
+    fi
+    continue
+  fi
+
+  {
+    echo "training_exit=non_oom_failure"
+    echo "failed_query_slots=${QUERY_SLOTS}"
+    echo "status=${STATUS}"
+    date --iso-8601=seconds
+  } | tee -a "${CONTROLLER_LOG}"
+  exit "${STATUS}"
+done
+
+echo "All query-slot attempts exhausted because of CUDA OOM" | tee -a "${CONTROLLER_LOG}" >&2
+exit 137

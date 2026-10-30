@@ -1,0 +1,24 @@
+{
+  "checksum_verified": true,
+  "copied_bytes": 747172624878,
+  "dataset_counts": {
+    "DL3DV": 100000,
+    "HM3D": 60000,
+    "JHU": 40000
+  },
+  "destination": "/export/io104a/data/xliu253/omnicrafter_mixed_local_cache",
+  "fully_decoded_examples": 96,
+  "logical_sets": 200000,
+  "manifest_sha256": "1020aff9922494cc44ea9204740faab0814ac0b823ed0aac404d6ef81f04a184",
+  "offsets_sha256": "2d49c692e07e3c1beb3d575e89ee45359be106350db93cbf5ed34d2e40723d68",
+  "originals_unchanged": true,
+  "running_training_switched": false,
+  "source_manifest_sha256": "b5b02c967c6f1ec210980ec36a7c89bd34d68a877cf5530c4e16dcc5e4c8a71c",
+  "stage": "complete",
+  "time": "2026-10-27T20:51:19-04:00",
+  "unique_images": {
+    "DL3DV": 781656,
+    "HM3D": 445911,
+    "JHU": 134041
+  }
+}

@@ -1,0 +1,20 @@
+# Only the inference-relevant fields of the original training/config/default.yaml.
+img_size: 518
+patch_size: 14
+embed_dim: 1024
+model:
+  enable_camera: true
+  enable_depth: true
+  enable_point: true
+  aggregator:
+    depth: 36
+    num_heads: 16
+    mlp_ratio: 4.0
+    patch_embed: dinov2_vitl14_reg
+    num_register_tokens: 5
+    qkv_bias: true
+    proj_bias: true
+    ffn_bias: true
+    qk_norm: true
+    rope_freq: 100
+    init_values: 0.01

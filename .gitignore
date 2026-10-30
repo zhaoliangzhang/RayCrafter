@@ -12,3 +12,6 @@ wandb/
 *.pth
 *.tar
 .inductor_cache/
+
+# Over GitHub's 100 MB limit; copied separately (OMNICRAFTER_HANDOFF.md).
+omnicrafter_handoff/metadata/train_cached.jsonl.gz

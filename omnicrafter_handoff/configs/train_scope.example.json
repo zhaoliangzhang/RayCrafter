@@ -1,0 +1,13 @@
+{
+  "architecture": "scope",
+  "data_dir": "/scratch/YOUR_USER/omnicrafter/train_manifest",
+  "output": "/scratch/YOUR_USER/omnicrafter/runs/mixed_scope_2ref3_b1_300k",
+  "wan_root": "/scratch/YOUR_USER/omnicrafter/weights/wan21",
+  "base_initialization": "/scratch/YOUR_USER/omnicrafter/weights/framecrafter.safetensors",
+  "restore_checkpoint": null,
+  "initial_step": 0,
+  "final_step": 300000,
+  "save_every": 2000,
+  "num_gpus": 4,
+  "batch_per_gpu": 1
+}

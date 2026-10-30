@@ -1,0 +1,3 @@
+{"source_sample":"demo_set","scene_name":"demo_scene","target_number":0,"refs":["images/000000.png","images/000004.png"],"src":"noisy/000001.png","target":"images/000001.png","frame_index":1}
+{"source_sample":"demo_set","scene_name":"demo_scene","target_number":1,"refs":["images/000000.png","images/000004.png"],"src":"noisy/000002.png","target":"images/000002.png","frame_index":2}
+{"source_sample":"demo_set","scene_name":"demo_scene","target_number":2,"refs":["images/000000.png","images/000004.png"],"src":"noisy/000003.png","target":"images/000003.png","frame_index":3}

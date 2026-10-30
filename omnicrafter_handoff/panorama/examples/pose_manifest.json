@@ -1,0 +1,6 @@
+{
+  "pose_convention": "w2c_opencv",
+  "scenes": {
+    "demo_scene": {"pose_path": "poses/scene.npz", "num_frames": 5}
+  }
+}

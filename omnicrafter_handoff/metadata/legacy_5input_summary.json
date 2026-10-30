@@ -1,0 +1,57 @@
+{
+  "format_version": 1,
+  "manifests": {
+    "all": {
+      "bytes": 1836214056,
+      "dataset_rows": {
+        "360Loc": 750000,
+        "HM3D": 750000,
+        "JHU": 750000,
+        "Replica": 750000
+      },
+      "logical_sets": 1000000,
+      "path": "manifests/all.jsonl",
+      "rows": 3000000,
+      "sha256": "7737fe16d39c5e5efb203bada7c98d2ce45fc8d8926635c4c5997ffa91b8cd6e"
+    },
+    "smoke": {
+      "bytes": 14598,
+      "dataset_rows": {
+        "360Loc": 6,
+        "HM3D": 6,
+        "JHU": 6,
+        "Replica": 6
+      },
+      "logical_sets": 8,
+      "path": "manifests/smoke.jsonl",
+      "rows": 24,
+      "sha256": "f167d29a7e2c5c73e2f2592c1a1a62bccfb39bc6fb760a892cb1359e065cac6f"
+    },
+    "train": {
+      "bytes": 1828871962,
+      "dataset_rows": {
+        "360Loc": 747000,
+        "HM3D": 747000,
+        "JHU": 747000,
+        "Replica": 747000
+      },
+      "logical_sets": 996000,
+      "path": "train.jsonl",
+      "rows": 2988000,
+      "sha256": "f8f0d36eb0db1d9e1c803a7f019b47dce6ba0608a3d78faf67691ac6840ed774"
+    },
+    "validation": {
+      "bytes": 7342094,
+      "dataset_rows": {
+        "360Loc": 3000,
+        "HM3D": 3000,
+        "JHU": 3000,
+        "Replica": 3000
+      },
+      "logical_sets": 4000,
+      "path": "val.jsonl",
+      "rows": 12000,
+      "sha256": "56b59f075a023c6fc8a083575850b5474239a81652c32f1a9eb9f333c96dce10"
+    }
+  }
+}

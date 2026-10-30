@@ -1,0 +1,23 @@
+{
+  "revision": "2026-10-29-scope-training-portability-v1",
+  "architecture_option": "architecture: concat (legacy default) or scope (explicit)",
+  "scope_source_commit": "2fa984036004fb564fc2b0e888ce2bd95ab03735",
+  "model_implementation_changed": false,
+  "dataset_changed": false,
+  "source_data_files_verified_unchanged": 477,
+  "published_initialization_sha256": "fa22ffdb9a54d5eb029618bcd424af1623ee6d64eb6277db7f7c478ab5b92524",
+  "initialization_conversion": "CPU-only new file; preserve 800 LoRA tensors and patch bias; patch weight [:, :36]; leave original unchanged",
+  "trained_scope_checkpoint_tensors": 1202,
+  "scope_parameter_tensors": 400,
+  "tests": {
+    "portable_tests_including_original_mounts_and_real_adapter_conversion": {"passed": 25, "failed": 0, "skipped": 0},
+    "frozen_mixed_camera_loss_protocol": {"passed": 12, "failed": 0, "skipped": 1},
+    "shell_syntax": "passed",
+    "full_distributed_gpu_training": "not run",
+    "skipjack_installation": "not tested"
+  },
+  "scope_evaluation_supported": false,
+  "training_jobs_launched": false,
+  "existing_jobs_modified": false,
+  "original_tar_gz_replaced": false
+}

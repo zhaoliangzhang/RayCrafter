@@ -1,0 +1,101 @@
+{
+  "candidate_groups_by_scene": {
+    "06_AMR1_pw_000000-000066": 1737,
+    "10_AMES_pw_000029-000079": 1736,
+    "24_Clark_ps_000060-000116": 1737,
+    "24_Clark_pw_000142-000198": 1736,
+    "27_Dunning_pw_000105-000148": 1632,
+    "34_Hackerman_pw_000000-000070": 1737,
+    "35_Hodson_pw_000071-000130": 1736,
+    "49_Levering_pw_000065-000098": 1122,
+    "99_pano_p2_002000-002199": 1736,
+    "99_pano_p4_000800-000999": 1736
+  },
+  "candidate_unique_ref_pairs_by_scene": {
+    "06_AMR1_pw_000000-000066": 879,
+    "10_AMES_pw_000029-000079": 659,
+    "24_Clark_ps_000060-000116": 755,
+    "24_Clark_pw_000142-000198": 749,
+    "27_Dunning_pw_000105-000148": 544,
+    "34_Hackerman_pw_000000-000070": 918,
+    "35_Hodson_pw_000071-000130": 793,
+    "49_Levering_pw_000065-000098": 374,
+    "99_pano_p2_002000-002199": 1456,
+    "99_pano_p4_000800-000999": 1453
+  },
+  "conditioning": "pure NVS using a black query input",
+  "created_at": "2026-09-04T23:11:38-04:00",
+  "dataset": "JHU held-out validation",
+  "format_version": 1,
+  "ground_truth_storage": "clean RGB files materialized under JHU/images; hard-linked to source files when on the same filesystem",
+  "grouped_manifest": "/cis/net/io80/data/xliu253/framecrafter/5input_model/evaluation/jhu_holdout10_500_2ref3/grouped_samples.jsonl",
+  "grouped_manifest_sha256": "e1480885b4629297f3622e4f322713fdeb7fde039832de2a1f5c0761f7600111",
+  "heldout_scenes": [
+    "06_AMR1_pw_000000-000066",
+    "10_AMES_pw_000029-000079",
+    "24_Clark_ps_000060-000116",
+    "24_Clark_pw_000142-000198",
+    "27_Dunning_pw_000105-000148",
+    "34_Hackerman_pw_000000-000070",
+    "35_Hodson_pw_000071-000130",
+    "49_Levering_pw_000065-000098",
+    "99_pano_p2_002000-002199",
+    "99_pano_p4_000800-000999"
+  ],
+  "image_resolution_height_width": [
+    256,
+    512
+  ],
+  "manifest": "/cis/net/io80/data/xliu253/framecrafter/5input_model/evaluation/jhu_holdout10_500_2ref3/val_2ref3_nvs.jsonl",
+  "manifest_rows": 1500,
+  "manifest_sha256": "ed93d8a97931d38d9d90eef7d39239c57ee845fb7bc598d3916c24cd2d5e9351",
+  "output_root": "/cis/net/io80/data/xliu253/framecrafter/5input_model/evaluation/jhu_holdout10_500_2ref3",
+  "pose_manifest": "/cis/net/io80/data/xliu253/framecrafter/5input_model/evaluation/jhu_holdout10_500_2ref3/poses/manifest.json",
+  "reference_views_per_set": 2,
+  "sample_sets": 500,
+  "samples_per_scene": 50,
+  "selected_sets_by_scene": {
+    "06_AMR1_pw_000000-000066": 50,
+    "10_AMES_pw_000029-000079": 50,
+    "24_Clark_ps_000060-000116": 50,
+    "24_Clark_pw_000142-000198": 50,
+    "27_Dunning_pw_000105-000148": 50,
+    "34_Hackerman_pw_000000-000070": 50,
+    "35_Hodson_pw_000071-000130": 50,
+    "49_Levering_pw_000065-000098": 50,
+    "99_pano_p2_002000-002199": 50,
+    "99_pano_p4_000800-000999": 50
+  },
+  "selection_policy": "50 deterministic random groups per held-out scene; unique reference pair; three distinct targets; no ref/target overlap",
+  "selection_seed": 20260904,
+  "source_manifest": "/cis/net/io80/data/xliu253/framecrafter/5input_model/manifests/jhu_holdout10_seed20260822/jhu_test_2ref1_10_scenes.jsonl",
+  "source_pose_manifest": "/cis/net/io80/data/xliu253/framecrafter/5input_model/poses/manifest.json",
+  "status": "complete",
+  "storage_operations": {
+    "image_hardlink": 707,
+    "pose_hardlink": 10
+  },
+  "target_views_per_set": 3,
+  "unique_materialized_images": 707,
+  "variants": {
+    "2ref1": {
+      "grouped_manifest": "/cis/net/io80/data/xliu253/framecrafter/5input_model/evaluation/jhu_holdout10_500_2ref3/grouped_samples_2ref1.jsonl",
+      "grouped_manifest_sha256": "40c693131581fb3625fdafe7dc9475ecdaa504761b87855d95c186c20bef8596",
+      "manifest": "/cis/net/io80/data/xliu253/framecrafter/5input_model/evaluation/jhu_holdout10_500_2ref3/val_2ref1_nvs.jsonl",
+      "manifest_rows": 1500,
+      "manifest_sha256": "664b4e2c5a316aae2a8a2f8661186b5581f3b3ebf316149de0151b2eaaa50c1a",
+      "references_per_set": 2,
+      "sample_sets": 1500,
+      "target_identity": "exact flattening of every 2ref3 target",
+      "targets_per_set": 1
+    },
+    "2ref3": {
+      "grouped_manifest": "/cis/net/io80/data/xliu253/framecrafter/5input_model/evaluation/jhu_holdout10_500_2ref3/grouped_samples.jsonl",
+      "manifest": "/cis/net/io80/data/xliu253/framecrafter/5input_model/evaluation/jhu_holdout10_500_2ref3/val_2ref3_nvs.jsonl",
+      "manifest_rows": 1500,
+      "references_per_set": 2,
+      "sample_sets": 500,
+      "targets_per_set": 3
+    }
+  }
+}

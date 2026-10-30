@@ -1,0 +1,69 @@
+{
+  "benchmark_manifest": "/cis/net/io72a/data/xliu253/replica_val_data/benchmarks/replica_2ref3_256x512/manifest.json",
+  "benchmark_sets": 68,
+  "benchmark_targets": 204,
+  "clean_model_images": 816,
+  "cleanup_render_images": 2040,
+  "effective_trajectories": 68,
+  "excluded_short_trajectories": 9,
+  "manifests": {
+    "val_2ref10_cleanup_all_drops.jsonl": {
+      "bytes": 1871457,
+      "path": "/cis/net/io72a/data/xliu253/replica_val_data/val_2ref10_cleanup_all_drops.jsonl",
+      "rows": 2040,
+      "sha256": "1fbfc53e492867e5f85675f4fe86c1b6713ebaa6bb6c346d7555acf01a1b6da7"
+    },
+    "val_2ref10_cleanup_drop050.jsonl": {
+      "bytes": 623819,
+      "path": "/cis/net/io72a/data/xliu253/replica_val_data/val_2ref10_cleanup_drop050.jsonl",
+      "rows": 680,
+      "sha256": "8adf1aa76b0445ae6191b99ccab4d66eaccdfb674997f84c3c09efc555f8ec3d"
+    },
+    "val_2ref10_nvs.jsonl": {
+      "bytes": 573849,
+      "path": "/cis/net/io72a/data/xliu253/replica_val_data/val_2ref10_nvs.jsonl",
+      "rows": 680,
+      "sha256": "8d3485071754f448069e936bc210be067f02c42142abd64d6c3c19db9bf1d63b"
+    },
+    "val_2ref1_cleanup_all_drops.jsonl": {
+      "bytes": 574332,
+      "path": "/cis/net/io72a/data/xliu253/replica_val_data/val_2ref1_cleanup_all_drops.jsonl",
+      "rows": 612,
+      "sha256": "c4c00726d335aa25f816aa9cfc3bdb41234921031cccbef26ec49330a47a25da"
+    },
+    "val_2ref1_cleanup_drop050.jsonl": {
+      "bytes": 191444,
+      "path": "/cis/net/io72a/data/xliu253/replica_val_data/val_2ref1_cleanup_drop050.jsonl",
+      "rows": 204,
+      "sha256": "562d39fe35888661f993d8556bd7f4f2e3913092ac5e26d61a69d3fe9557e9c0"
+    },
+    "val_2ref1_nvs.jsonl": {
+      "bytes": 176453,
+      "path": "/cis/net/io72a/data/xliu253/replica_val_data/val_2ref1_nvs.jsonl",
+      "rows": 204,
+      "sha256": "bacaac263029bd76f1568aa08105473727b7742dc4c09a75b04767967a2f3654"
+    },
+    "val_2ref3_cleanup_all_drops.jsonl": {
+      "bytes": 560868,
+      "path": "/cis/net/io72a/data/xliu253/replica_val_data/val_2ref3_cleanup_all_drops.jsonl",
+      "rows": 612,
+      "sha256": "933245b797e78b081d41048d5e591be841ee2e156f44dacecc12cd6fff49070c"
+    },
+    "val_2ref3_cleanup_drop050.jsonl": {
+      "bytes": 186956,
+      "path": "/cis/net/io72a/data/xliu253/replica_val_data/val_2ref3_cleanup_drop050.jsonl",
+      "rows": 204,
+      "sha256": "4f0b89ac8f0f422e2873ecaccda58149ddcf690450e73257c763d3977dfdbc8c"
+    },
+    "val_2ref3_nvs.jsonl": {
+      "bytes": 171965,
+      "path": "/cis/net/io72a/data/xliu253/replica_val_data/val_2ref3_nvs.jsonl",
+      "rows": 204,
+      "sha256": "56f266d6e3bfef255704739135140a3fa71ac722bc2379a1b53d8f5a40acb7cc"
+    }
+  },
+  "pose_manifest_entries": 68,
+  "released_index_entries": 77,
+  "replica_scenes": 16,
+  "status": "complete"
+}

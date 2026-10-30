@@ -1,0 +1,381 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Continue OmniCrafter/Model 2 from global step 100000 for 200000 additional
+# optimizer steps using an exact 3:1 HM3D:JHU manifest and a query-level task
+# mixture. Every stored query is a noisy render. During online 2D augmentation,
+# each query independently receives 100% dropout with probability 0.40; the
+# remaining queries receive cleanup dropout sampled from 0% through 99%.
+
+umask 0002
+CURRENT_HOST="$(hostname -s)"
+case "${CURRENT_HOST}" in
+  io105|lambda-scalar) ;;
+  *)
+    if [[ "${ALLOW_OTHER_HOST:-0}" != "1" ]]; then
+      echo "This launcher is intended for io105 (lambda-scalar); current host is ${CURRENT_HOST}." >&2
+      exit 2
+    fi
+    ;;
+esac
+
+ROOT="${PANORAMA_NVS_ROOT:-/cis/home/xliu253/Documents/PanoLagerNVS/panorama_nvs_transfer_20260818/workspace}"
+REPO="${ROOT}/third_party/FrameCrafter"
+ENV_DIR="${FRAMECRAFTER_ENV:-/cis/home/xliu253/micromamba/envs/framecrafter}"
+DATA_ROOT="${FRAMECRAFTER_DATA:-/cis/net/io80/data/xliu253/framecrafter/5input_model}"
+OUTPUT_DIR="${OUTPUT_DIR:-/cis/net/io81/data/xliu253/framecrafter/omnicrafter_100000_hm3d_jhu_cleanup_nvs_256x512_continue}"
+MANIFEST_DIR="${OUTPUT_DIR}/data_manifest"
+TRAIN_METADATA="${TRAIN_METADATA:-${MANIFEST_DIR}/train.jsonl}"
+POSE_MANIFEST="${POSE_MANIFEST:-${DATA_ROOT}/poses/manifest.json}"
+AUDIT_SUMMARY="${AUDIT_SUMMARY:-${DATA_ROOT}/audit_summary.json}"
+HM3D_MANIFEST="${HM3D_MANIFEST:-${DATA_ROOT}/manifests/hm3d_train.jsonl}"
+JHU_MANIFEST="${JHU_MANIFEST:-${DATA_ROOT}/manifests/jhu_holdout10_seed20260822/jhu_train_2ref1_excluding_10_scenes.jsonl}"
+HELDOUT_SCENES="${HELDOUT_SCENES:-${DATA_ROOT}/manifests/jhu_holdout10_seed20260822/heldout_scenes.json}"
+MANIFEST_BUILDER="${ROOT}/scripts/build_hm3d_jhu_q3_ratio_manifest.py"
+
+BRANCH_GLOBAL_STEP="${BRANCH_GLOBAL_STEP:-100000}"
+BRANCH_CHECKPOINT="${BRANCH_CHECKPOINT:-/cis/net/io81/data/xliu253/framecrafter/model2_hm3d_54000_continue/step-100000.safetensors}"
+ADDITIONAL_TRAIN_STEPS="${ADDITIONAL_TRAIN_STEPS:-200000}"
+FINAL_GLOBAL_STEP=$((BRANCH_GLOBAL_STEP + ADDITIONAL_TRAIN_STEPS))
+SAVE_STEPS="${SAVE_STEPS:-2000}"
+GPU_LIST="${GPU_LIST:-0,1,2,3}"
+TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-1}"
+TRAIN_HEIGHT="${TRAIN_HEIGHT:-256}"
+TRAIN_WIDTH="${TRAIN_WIDTH:-512}"
+QUERY_SLOTS=3
+NVS_PROBABILITY="${NVS_PROBABILITY:-0.0}"
+NVS_RATIO="${NVS_RATIO:-0.40}"
+MIN_QUERY_PIXEL_DROPOUT="${MIN_QUERY_PIXEL_DROPOUT:-0.00}"
+MAX_QUERY_PIXEL_DROPOUT="${MAX_QUERY_PIXEL_DROPOUT:-0.99}"
+EXPECTED_HM3D_GROUPS="${EXPECTED_HM3D_GROUPS:-248970}"
+EXPECTED_JHU_GROUPS="${EXPECTED_JHU_GROUPS:-82990}"
+HM3D_PER_JHU="${HM3D_PER_JHU:-3}"
+MANIFEST_SEED="${MANIFEST_SEED:-20260903}"
+EXPECTED_TRAIN_SETS=$((EXPECTED_HM3D_GROUPS + EXPECTED_JHU_GROUPS))
+EXPECTED_ROWS=$((EXPECTED_TRAIN_SETS * QUERY_SLOTS))
+MEMORY_REPORT_STEPS="${MEMORY_REPORT_STEPS:-100}"
+ACCELERATE_CONFIG_FILE="model_training/io105_original_zero2_gpuopt_bf16.yaml"
+DEEPSPEED_CONFIG="${REPO}/${ACCELERATE_CONFIG_FILE}"
+NETWORK_WAN="${NETWORK_WAN:-${ROOT}/checkpoints/wan21}"
+LOCAL_WAN="${LOCAL_WAN:-/dev/shm/xliu253/framecrafter_wan21}"
+STAGE_WAN="${STAGE_WAN:-0}"
+LOCAL_CHECKPOINT_DIR="${LOCAL_CHECKPOINT_DIR:-/dev/shm/xliu253/framecrafter_checkpoints}"
+
+if [[ "${GPU_LIST}" != "0,1,2,3" ]]; then
+  echo "This run requires all four io105 GPUs; got ${GPU_LIST}." >&2
+  exit 2
+fi
+for value_name in BRANCH_GLOBAL_STEP ADDITIONAL_TRAIN_STEPS SAVE_STEPS TRAIN_BATCH_SIZE TRAIN_HEIGHT TRAIN_WIDTH MEMORY_REPORT_STEPS EXPECTED_HM3D_GROUPS EXPECTED_JHU_GROUPS HM3D_PER_JHU MANIFEST_SEED; do
+  value="${!value_name}"
+  if [[ ! "${value}" =~ ^[0-9]+$ ]] || ((value < 1)); then
+    echo "${value_name} must be a positive integer; got ${value}." >&2
+    exit 2
+  fi
+done
+if ((TRAIN_WIDTH != 2 * TRAIN_HEIGHT || TRAIN_HEIGHT % 16 != 0 || TRAIN_WIDTH % 16 != 0)); then
+  echo "Resolution must be a 2:1 ERP divisible by 16; got ${TRAIN_HEIGHT}x${TRAIN_WIDTH}." >&2
+  exit 2
+fi
+if [[ "${NVS_PROBABILITY}" != "0.0" ]]; then
+  echo "Legacy sample-level NVS_PROBABILITY must remain disabled (0.0)." >&2
+  exit 2
+fi
+"${ENV_DIR}/bin/python" - "${NVS_RATIO}" <<'PY'
+import sys
+
+ratio = float(sys.argv[1])
+if not 0.0 <= ratio <= 1.0:
+    raise SystemExit(f"NVS_RATIO must be in [0, 1], got {ratio}")
+PY
+if ((EXPECTED_HM3D_GROUPS != HM3D_PER_JHU * EXPECTED_JHU_GROUPS)); then
+  echo "Selected groups do not implement HM3D:JHU=${HM3D_PER_JHU}:1." >&2
+  exit 2
+fi
+if [[ "${STAGE_WAN}" != "0" && "${STAGE_WAN}" != "1" ]]; then
+  echo "STAGE_WAN must be 0 or 1; got ${STAGE_WAN}." >&2
+  exit 2
+fi
+
+for required in "${ENV_DIR}/bin/python" "${BRANCH_CHECKPOINT}" "${POSE_MANIFEST}" \
+  "${AUDIT_SUMMARY}" "${HM3D_MANIFEST}" "${JHU_MANIFEST}" "${HELDOUT_SCENES}" \
+  "${MANIFEST_BUILDER}" "${ROOT}/scripts/run_framecrafter_model2_large_io95.sh" \
+  "${REPO}/${ACCELERATE_CONFIG_FILE}" "${DEEPSPEED_CONFIG}" "${NETWORK_WAN}"; do
+  if [[ ! -e "${required}" ]]; then
+    echo "Required path does not exist: ${required}" >&2
+    exit 1
+  fi
+done
+
+mkdir -p "${OUTPUT_DIR}/logs" "${OUTPUT_DIR}/reports" "${MANIFEST_DIR}"
+exec 9>"${OUTPUT_DIR}/.launch.lock"
+if ! flock -n 9; then
+  echo "Another process holds ${OUTPUT_DIR}/.launch.lock." >&2
+  exit 2
+fi
+
+if [[ ! -s "${TRAIN_METADATA}" || ! -s "${MANIFEST_DIR}/summary.json" ]]; then
+  "${ENV_DIR}/bin/python" "${MANIFEST_BUILDER}" \
+    --hm3d-manifest "${HM3D_MANIFEST}" --jhu-manifest "${JHU_MANIFEST}" \
+    --heldout-scenes "${HELDOUT_SCENES}" --output "${TRAIN_METADATA}" \
+    --hm3d-groups "${EXPECTED_HM3D_GROUPS}" \
+    --jhu-groups "${EXPECTED_JHU_GROUPS}" \
+    --hm3d-per-jhu "${HM3D_PER_JHU}" --seed "${MANIFEST_SEED}"
+fi
+
+"${ENV_DIR}/bin/python" - "${TRAIN_METADATA}" "${MANIFEST_DIR}/summary.json" \
+  "${EXPECTED_TRAIN_SETS}" "${EXPECTED_ROWS}" "${HELDOUT_SCENES}" \
+  "${EXPECTED_HM3D_GROUPS}" "${EXPECTED_JHU_GROUPS}" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+
+manifest, summary_path, expected_sets, expected_rows, heldout_path, expected_hm3d, expected_jhu = (
+    Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4]),
+    Path(sys.argv[5]), int(sys.argv[6]), int(sys.argv[7])
+)
+summary = json.loads(summary_path.read_text())
+heldout = set(json.loads(heldout_path.read_text()))
+if summary.get("logical_sets") != expected_sets or summary.get("rows") != expected_rows:
+    raise SystemExit("Manifest summary count mismatch")
+expected_counts = {"HM3D": expected_hm3d, "JHU": expected_jhu}
+if summary.get("selected_groups") != expected_counts:
+    raise SystemExit(f"Manifest ratio mismatch: {summary.get('selected_groups')}")
+if summary.get("queries_per_set") != 3 or summary.get("heldout_scene_leakage") is not False:
+    raise SystemExit("Manifest protocol/holdout audit failed")
+digest = hashlib.sha256()
+rows = groups = 0
+current = None
+next_target = 0
+counts = {"HM3D": 0, "JHU": 0}
+with manifest.open("rb") as handle:
+    for line_number, encoded in enumerate(handle, 1):
+        if not encoded.strip():
+            continue
+        digest.update(encoded)
+        row = json.loads(encoded)
+        sample = row["source_sample"]
+        target = int(row["target_number"])
+        dataset = row["dataset"]
+        if dataset not in counts:
+            raise SystemExit(f"Unexpected dataset at line {line_number}: {dataset}")
+        if dataset == "JHU" and row["scene_name"].removeprefix("JHU::") in heldout:
+            raise SystemExit(f"Held-out scene leaked at line {line_number}")
+        if sample != current:
+            if current is not None and next_target != 3:
+                raise SystemExit(f"Incomplete group {current}")
+            if target != 0:
+                raise SystemExit(f"Group {sample} starts at target {target}")
+            current, next_target = sample, 1
+            groups += 1
+            counts[dataset] += 1
+        else:
+            if target != next_target:
+                raise SystemExit(f"Non-contiguous target in {sample}")
+            next_target += 1
+        rows += 1
+if current is not None and next_target != 3:
+    raise SystemExit(f"Incomplete final group {current}")
+if (groups, rows) != (expected_sets, expected_rows):
+    raise SystemExit(f"Manifest counts {(groups, rows)} != {(expected_sets, expected_rows)}")
+if counts != expected_counts:
+    raise SystemExit(f"Dataset group counts mismatch: {counts}")
+if digest.hexdigest() != summary.get("sha256"):
+    raise SystemExit("Manifest SHA-256 mismatch")
+print(json.dumps({"validated_groups": groups, "validated_rows": rows,
+                  "dataset_groups": counts, "heldout_scene_leakage": False,
+                  "sha256": digest.hexdigest()}, sort_keys=True))
+PY
+
+# Build/reuse the byte-offset index before distributed workers launch.
+PYTHONPATH="${REPO}${PYTHONPATH:+:${PYTHONPATH}}" "${ENV_DIR}/bin/python" - \
+  "${DATA_ROOT}" "${TRAIN_METADATA}" "${POSE_MANIFEST}" "${EXPECTED_TRAIN_SETS}" \
+  "${TRAIN_HEIGHT}" "${TRAIN_WIDTH}" "${NVS_RATIO}" <<'PY'
+import sys
+from diffsynth.core.data.pose_conditioned_render_query_dataset import (
+    WanPanoramaPoseConditionedRenderQueryDataset,
+)
+dataset = WanPanoramaPoseConditionedRenderQueryDataset(
+    base_path=sys.argv[1], metadata_path=sys.argv[2], pose_manifest_path=sys.argv[3],
+    repeat=1, height=int(sys.argv[5]), width=int(sys.argv[6]),
+    min_pixel_dropout=0.0, max_pixel_dropout=0.99, stream_metadata=True,
+    max_query_slots=3, nvs_probability=0.0, nvs_ratio=float(sys.argv[7]),
+)
+if len(dataset) != int(sys.argv[4]):
+    raise SystemExit(f"Stream index has {len(dataset)} samples; expected {sys.argv[4]}")
+first = dataset.samples[0]
+if len(first["refs"]) != 2 or len(first["noisy"]) != 3 or len(first["targets"]) != 3:
+    raise SystemExit("First sample is not 2ref3")
+print(f"validated_stream_index={len(dataset)} first_sample=2ref3")
+PY
+
+# Resume the newest checkpoint from this branch, otherwise branch from 100000.
+SOURCE_CHECKPOINT="${BRANCH_CHECKPOINT}"
+SOURCE_GLOBAL_STEP="${BRANCH_GLOBAL_STEP}"
+LATEST_EXISTING="$(find "${OUTPUT_DIR}" -maxdepth 1 -type f -name 'step-*.safetensors' -print0 \
+  | sort -zV | tail -z -n 1 | tr -d '\0')"
+if [[ -n "${LATEST_EXISTING}" ]]; then
+  latest_step="$(basename "${LATEST_EXISTING}" | sed -n 's/^step-\([0-9][0-9]*\)\.safetensors$/\1/p')"
+  if [[ -z "${latest_step}" || "${latest_step}" -lt "${BRANCH_GLOBAL_STEP}" \
+    || "${latest_step}" -gt "${FINAL_GLOBAL_STEP}" ]]; then
+    echo "Invalid existing continuation checkpoint: ${LATEST_EXISTING}" >&2
+    exit 2
+  fi
+  if ((latest_step == FINAL_GLOBAL_STEP)); then
+    echo "Training is already complete at ${LATEST_EXISTING}."
+    exit 0
+  fi
+  SOURCE_CHECKPOINT="${LATEST_EXISTING}"
+  SOURCE_GLOBAL_STEP="${latest_step}"
+fi
+
+RUN_TIMESTAMP="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
+MAIN_LOG="${OUTPUT_DIR}/logs/train_${SOURCE_GLOBAL_STEP}_to_${FINAL_GLOBAL_STEP}_${RUN_TIMESTAMP}.log"
+exec > >(tee -a "${MAIN_LOG}") 2>&1
+
+write_state() {
+  local state="$1" phase="$2" temporary="${OUTPUT_DIR}/.state.$$.tmp"
+  printf '{"state":"%s","phase":"%s","host":"%s","initial_step":%d,"target_step":%d,"updated":"%s","log":"%s"}\n' \
+    "${state}" "${phase}" "${CURRENT_HOST}" "${SOURCE_GLOBAL_STEP}" "${FINAL_GLOBAL_STEP}" \
+    "$(date --iso-8601=seconds)" "${MAIN_LOG}" >"${temporary}"
+  mv "${temporary}" "${OUTPUT_DIR}/run_state.json"
+}
+on_exit() {
+  local status=$?
+  if ((status != 0)); then
+    write_state failed "${CURRENT_PHASE:-preflight}"
+  fi
+  echo "training_exit_status=${status}"
+  echo "run_end=$(date --iso-8601=seconds)"
+}
+trap on_exit EXIT
+
+echo "run_start=$(date --iso-8601=seconds)"
+echo "host=${CURRENT_HOST}"
+echo "source_checkpoint=${SOURCE_CHECKPOINT}"
+echo "source_global_step=${SOURCE_GLOBAL_STEP}"
+echo "target_global_step=${FINAL_GLOBAL_STEP}"
+echo "additional_requested_optimizer_steps=${ADDITIONAL_TRAIN_STEPS}"
+echo "layout=2 clean references + 3 conditioned queries + 5 pose raymaps"
+echo "stored_queries=all noisy point-cloud renders; no stored samples are black or rewritten"
+echo "task_mix=query-level independent Bernoulli: NVS_RATIO=${NVS_RATIO} forces 100% dropout"
+echo "cleanup_online_pixel_dropout=non-NVS queries use uniform integer percentage 0 through 99"
+echo "possible_q3_mix=0,1,2,or 3 black queries in the same training sample"
+echo "dataset_ratio=HM3D:JHU ${HM3D_PER_JHU}:1 exactly"
+echo "dataset_groups=HM3D:${EXPECTED_HM3D_GROUPS},JHU:${EXPECTED_JHU_GROUPS}"
+echo "training_metadata=${TRAIN_METADATA}"
+echo "validation_metadata=RESERVED_NOT_LOADED"
+echo "resolution=${TRAIN_HEIGHT}x${TRAIN_WIDTH}"
+echo "train_batch_size_per_gpu=${TRAIN_BATCH_SIZE}"
+echo "global_batch_size=$((4 * TRAIN_BATCH_SIZE))"
+echo "save_steps=${SAVE_STEPS}"
+echo "checkpoint_directory=${OUTPUT_DIR}"
+echo "configuration=4 GPU, original FrameCrafter DeepSpeed ZeRO-2, GPU optimizer, CPU model initialization, q3"
+echo "deepspeed_config=${DEEPSPEED_CONFIG}"
+echo "main_log=${MAIN_LOG}"
+
+CURRENT_PHASE=stage_wan
+write_state running "${CURRENT_PHASE}"
+ACTIVE_WAN="${NETWORK_WAN}"
+if [[ "${STAGE_WAN}" == "1" && ! -s "${LOCAL_WAN}/.complete" ]]; then
+  echo "wan_stage_start=$(date --iso-8601=seconds)"
+  mkdir -p "${LOCAL_WAN}"
+  rsync -a --partial "${NETWORK_WAN}/" "${LOCAL_WAN}/"
+  wan_shards="$(find "${LOCAL_WAN}/Wan-AI/Wan2.1-I2V-14B-480P" -maxdepth 1 \
+    -type f -name 'diffusion_pytorch_model-*-of-00007.safetensors' | wc -l)"
+  if ((wan_shards != 7)); then
+    echo "Expected seven local WAN DiT shards, found ${wan_shards}." >&2
+    exit 1
+  fi
+  printf 'source=%s\ncompleted=%s\n' "${NETWORK_WAN}" "$(date --iso-8601=seconds)" \
+    >"${LOCAL_WAN}/.complete"
+  echo "wan_stage_end=$(date --iso-8601=seconds)"
+elif [[ "${STAGE_WAN}" == "1" ]]; then
+  echo "wan_stage_reuse=${LOCAL_WAN}"
+fi
+if [[ "${STAGE_WAN}" == "1" ]]; then
+  ACTIVE_WAN="${LOCAL_WAN}"
+else
+  echo "wan_source_reuse=${NETWORK_WAN} (io105 filesystem cache is warm)"
+fi
+
+CURRENT_PHASE=stage_checkpoint
+write_state running "${CURRENT_PHASE}"
+mkdir -p "${LOCAL_CHECKPOINT_DIR}"
+LOCAL_CHECKPOINT="${LOCAL_CHECKPOINT_DIR}/omnicrafter_source_step-${SOURCE_GLOBAL_STEP}.safetensors"
+source_bytes="$(stat -c %s "${SOURCE_CHECKPOINT}")"
+if [[ ! -f "${LOCAL_CHECKPOINT}" || "$(stat -c %s "${LOCAL_CHECKPOINT}" 2>/dev/null || echo 0)" != "${source_bytes}" ]]; then
+  rsync -a --partial "${SOURCE_CHECKPOINT}" "${LOCAL_CHECKPOINT}"
+fi
+if [[ "$(stat -c %s "${LOCAL_CHECKPOINT}")" != "${source_bytes}" ]]; then
+  echo "Local checkpoint size mismatch." >&2
+  exit 1
+fi
+
+"${ENV_DIR}/bin/python" - "${LOCAL_CHECKPOINT}" "${DEEPSPEED_CONFIG}" <<'PY'
+import os, sys, yaml
+from safetensors import safe_open
+checkpoint, config_path = sys.argv[1:]
+with safe_open(checkpoint, framework="pt", device="cpu") as handle:
+    keys = list(handle.keys())
+    patch = {k: tuple(handle.get_slice(k).get_shape()) for k in keys if "patch_embedding" in k}
+if len(keys) < 800 or not patch:
+    raise SystemExit(f"Incompatible checkpoint: tensors={len(keys)}, patch={patch}")
+config = yaml.safe_load(open(config_path))
+zero = config["deepspeed_config"]
+if zero.get("zero_stage") != 2:
+    raise SystemExit("DeepSpeed is not ZeRO-2")
+if zero.get("offload_optimizer_device") != "none":
+    raise SystemExit("Optimizer offload must be disabled")
+if zero.get("offload_param_device") != "none":
+    raise SystemExit("Parameter offload must be disabled")
+if config.get("use_cpu") is not False:
+    raise SystemExit("Accelerate must use GPUs")
+print(f"validated_checkpoint={checkpoint} tensors={len(keys)} bytes={os.path.getsize(checkpoint)} patch={patch}")
+print("validated_deepspeed=original_framecrafter_zero2_gpu_optimizer_no_param_offload")
+PY
+
+for gpu in 0 1 2 3; do
+  active="$(nvidia-smi -i "${gpu}" --query-compute-apps=pid --format=csv,noheader,nounits \
+    | sed '/^[[:space:]]*$/d')"
+  if [[ -n "${active}" ]]; then
+    echo "GPU ${gpu} is occupied by PID(s): ${active}" >&2
+    exit 2
+  fi
+done
+nvidia-smi --query-gpu=index,name,memory.total,memory.used,utilization.gpu --format=csv,noheader
+
+GLOBAL_BATCH_SIZE=$((4 * TRAIN_BATCH_SIZE))
+STEPS_PER_EPOCH=$(((EXPECTED_TRAIN_SETS + GLOBAL_BATCH_SIZE - 1) / GLOBAL_BATCH_SIZE))
+REMAINING_STEPS=$((FINAL_GLOBAL_STEP - SOURCE_GLOBAL_STEP))
+NUM_EPOCHS=$(((REMAINING_STEPS + STEPS_PER_EPOCH - 1) / STEPS_PER_EPOCH))
+if ((NUM_EPOCHS < 1)); then NUM_EPOCHS=1; fi
+
+CURRENT_PHASE=training
+write_state running "${CURRENT_PHASE}"
+export WAN_ROOT="${ACTIVE_WAN}"
+export GPU_LIST QUERY_ATTEMPTS="${QUERY_SLOTS}"
+export QUERY_OUTPUT_DIR="${OUTPUT_DIR}"
+export HEIGHT="${TRAIN_HEIGHT}" WIDTH="${TRAIN_WIDTH}" NUM_EPOCHS TRAIN_BATCH_SIZE
+export INITIAL_GLOBAL_STEP="${SOURCE_GLOBAL_STEP}"
+export MAX_TRAIN_STEPS="${FINAL_GLOBAL_STEP}"
+export SAVE_STEPS MEMORY_REPORT_STEPS
+export INIT_CHECKPOINT="${LOCAL_CHECKPOINT}"
+export OUTPUT_BASE="${OUTPUT_DIR}"
+export FRAMECRAFTER_DATA="${DATA_ROOT}"
+export TRAIN_METADATA POSE_MANIFEST AUDIT_SUMMARY
+export TRAIN_LOGICAL_SETS="${EXPECTED_TRAIN_SETS}"
+export ACCELERATE_CONFIG_FILE
+export GRADIENT_CHECKPOINTING_OFFLOAD=0
+export MIN_QUERY_PIXEL_DROPOUT MAX_QUERY_PIXEL_DROPOUT NVS_PROBABILITY NVS_RATIO
+export REPORT_SUFFIX="${REPORT_SUFFIX:-_hm3d${HM3D_PER_JHU}_jhu1_q3_query_nvsratio${NVS_RATIO/./}_256x512}"
+export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-/dev/shm/xliu253/framecrafter_triton_cache}"
+export TQDM_MININTERVAL="${TQDM_MININTERVAL:-30}"
+
+set +e
+bash "${ROOT}/scripts/run_framecrafter_model2_large_io95.sh"
+status=$?
+set -e
+if ((status == 0)); then
+  CURRENT_PHASE=done
+  write_state complete "${CURRENT_PHASE}"
+fi
+exit "${status}"

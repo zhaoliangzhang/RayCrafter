@@ -1,0 +1,563 @@
+{
+  "snapshot_date": "2026-10-19",
+  "source_label": "panorama_nvs_transfer_20260818/workspace",
+  "copied_files": [
+    {
+      "package_path": "code/LICENSE",
+      "source_relative_to_workspace": "third_party/FrameCrafter/LICENSE",
+      "sha256": "a172097153c8dec07f872bf749f4f856351b0690fde58ab2c4f570fc1d354931"
+    },
+    {
+      "package_path": "code/README_FrameCrafter.md",
+      "source_relative_to_workspace": "third_party/FrameCrafter/README.md",
+      "sha256": "5204b121e48425795485a690de144e1af43512fc4dae4aeff6efa9c30b072a31"
+    },
+    {
+      "package_path": "code/camera_utils.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/camera_utils.py",
+      "sha256": "4204d09159d97c0530d0a709541134690de66b607fe408c6074b8938113e5774"
+    },
+    {
+      "package_path": "code/diffsynth/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/__init__.py",
+      "sha256": "2b490dcb6e959ba03ed55e65493de2972eb256c34b51b8aa93a0190c59b69c92"
+    },
+    {
+      "package_path": "code/diffsynth/configs/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/configs/__init__.py",
+      "sha256": "1453aa3d029724c18c36e381f2e973af85026f3078c28630288af1f020acc182"
+    },
+    {
+      "package_path": "code/diffsynth/configs/model_configs.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/configs/model_configs.py",
+      "sha256": "e03934bcd4572d2be802a28e3b26242ec09f7b7a4afc0130259d8144f9de93e3"
+    },
+    {
+      "package_path": "code/diffsynth/configs/vram_management_module_maps.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/configs/vram_management_module_maps.py",
+      "sha256": "efe84b914ab9092971ef14ef851f743352df8fccd5d1eeaa29ac1123800afbe2"
+    },
+    {
+      "package_path": "code/diffsynth/core/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/__init__.py",
+      "sha256": "b7be932196f79e71205e1173e60c36d4cba41a8c7e647fc6839bf3a3741d0688"
+    },
+    {
+      "package_path": "code/diffsynth/core/attention/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/attention/__init__.py",
+      "sha256": "558e2a638ecbd3b7287bb9ab74d0e7e70b098da59bb8127163a494c39ec24190"
+    },
+    {
+      "package_path": "code/diffsynth/core/attention/attention.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/attention/attention.py",
+      "sha256": "0cba66d6a36d0526bb51506b3bc73778852d000724a939898daf479d9e5994b6"
+    },
+    {
+      "package_path": "code/diffsynth/core/data/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/data/__init__.py",
+      "sha256": "1ecd6e9c5e482e2ca0e3cfd0a787dc4095298513ea5cb09b2330e97f377e13cb"
+    },
+    {
+      "package_path": "code/diffsynth/core/data/cleanup_dataset.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/data/cleanup_dataset.py",
+      "sha256": "7b5a55330cc4db4ce36cb13ffcc2e6ae4e83dfa7380d104e3af35d38b4a139bc"
+    },
+    {
+      "package_path": "code/diffsynth/core/data/dataset.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/data/dataset.py",
+      "sha256": "bc60147fd331d4e38ba47b2ee93e17dd1e773437ee8d833e29ed9e5efa5a0afb"
+    },
+    {
+      "package_path": "code/diffsynth/core/data/mixed_cleanup_nvs_dataset.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/data/mixed_cleanup_nvs_dataset.py",
+      "sha256": "af91fd8b8fd250e4fd156b5db99c9438db5f0a1f97d73a18cce87b49172dbd20"
+    },
+    {
+      "package_path": "code/diffsynth/core/data/pose_conditioned_paired_rgbd_dataset.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/data/pose_conditioned_paired_rgbd_dataset.py",
+      "sha256": "a8689debb3af817ef4e607b123636e4288672fe455d745ece1cd63a36c0ccdef"
+    },
+    {
+      "package_path": "code/diffsynth/core/data/pose_conditioned_render_query_dataset.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/data/pose_conditioned_render_query_dataset.py",
+      "sha256": "76a3d4241c052d29938bc118e2ad1022f58b01c6315664c3641f8c24e6ca20aa"
+    },
+    {
+      "package_path": "code/diffsynth/core/data/pose_conditioned_rgbd_clean_target_dataset.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/data/pose_conditioned_rgbd_clean_target_dataset.py",
+      "sha256": "387e81595660adbb627893c9e3223627c4d08f4dccad8c48f5328b429cd5df19"
+    },
+    {
+      "package_path": "code/diffsynth/core/data/pose_conditioned_rgbd_query_dataset.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/data/pose_conditioned_rgbd_query_dataset.py",
+      "sha256": "f1c1f8742800adb54db5d02cd27d5d89852d76f99be80baa7266dc2b2bb2fb0b"
+    },
+    {
+      "package_path": "code/diffsynth/core/data/pose_conditioned_rgbd_reference_depth_dataset.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/data/pose_conditioned_rgbd_reference_depth_dataset.py",
+      "sha256": "9911e19b9fb656eb0ab288c9e664d0d2078c9648d025fa9fd02cd4d916dacbfe"
+    },
+    {
+      "package_path": "code/diffsynth/core/device/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/device/__init__.py",
+      "sha256": "5edc96aa7e96b17b394706bff9ede0a018b527f04a3712e02453209688f66122"
+    },
+    {
+      "package_path": "code/diffsynth/core/device/npu_compatible_device.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/device/npu_compatible_device.py",
+      "sha256": "f58a8746443e2558629c2d214a1e8f0edca3b7344b280e48239abfd6938da75f"
+    },
+    {
+      "package_path": "code/diffsynth/core/gradient/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/gradient/__init__.py",
+      "sha256": "e8db9f67a95741bcb4619b0cf8392152b9204ba16308b4dc7af943d8b7f22999"
+    },
+    {
+      "package_path": "code/diffsynth/core/gradient/gradient_checkpoint.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/gradient/gradient_checkpoint.py",
+      "sha256": "5c641446c35fa726f81a2ddd86549e0a05ab89ff730faccab7bb440a33eec874"
+    },
+    {
+      "package_path": "code/diffsynth/core/loader/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/loader/__init__.py",
+      "sha256": "f678e318bd3ae323a7878c644911afa26d18758effff7cca37ecc695d1cdaf52"
+    },
+    {
+      "package_path": "code/diffsynth/core/loader/config.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/loader/config.py",
+      "sha256": "ff437a53c3cdece8be5476da462081080447e1293eeac23a92db7a27f7e332ad"
+    },
+    {
+      "package_path": "code/diffsynth/core/loader/file.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/loader/file.py",
+      "sha256": "3f3c7e65d66f35436af7e996865a387e228a7f38b022adb509aabc2013d6c48d"
+    },
+    {
+      "package_path": "code/diffsynth/core/loader/model.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/loader/model.py",
+      "sha256": "a591c137cdcd71e667e884a9dc2d04f383dd999b6a801962924bd61bde495fd9"
+    },
+    {
+      "package_path": "code/diffsynth/core/vram/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/vram/__init__.py",
+      "sha256": "3fc422826dd95a5f058ff5bec9d8b48e883b641ef0f5e32010743394002bb5f5"
+    },
+    {
+      "package_path": "code/diffsynth/core/vram/disk_map.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/vram/disk_map.py",
+      "sha256": "dc01de940384ca36a94c5b8f27306a91a517249e076437270407cb2fafaed91f"
+    },
+    {
+      "package_path": "code/diffsynth/core/vram/initialization.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/vram/initialization.py",
+      "sha256": "a5541a038db28b2290e0bc1078ed3b78d1f45db84ce66a3d6b46ea68b98bbb22"
+    },
+    {
+      "package_path": "code/diffsynth/core/vram/layers.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/core/vram/layers.py",
+      "sha256": "9d7ea8f96843008e10dc16d7daf63569ba7ba81f814460f7c7444ccd5cb3b96e"
+    },
+    {
+      "package_path": "code/diffsynth/diffusion/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/diffusion/__init__.py",
+      "sha256": "4be6319cb181b97ad80d493b26b976110d3165fc6d3ed679ec2ea5c34fa688f4"
+    },
+    {
+      "package_path": "code/diffsynth/diffusion/base_pipeline.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/diffusion/base_pipeline.py",
+      "sha256": "8f5306576dfb7576702cd0ea6310598ce984b6239f38197d44ec2d3fd3e03b2d"
+    },
+    {
+      "package_path": "code/diffsynth/diffusion/flow_match.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/diffusion/flow_match.py",
+      "sha256": "348812f63f33efa18dc00d18febf4e769580cb941c727858a393e6386a871239"
+    },
+    {
+      "package_path": "code/diffsynth/diffusion/logger.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/diffusion/logger.py",
+      "sha256": "b24b47bc1691f9f5b463519b363f436da027a258362da525b2be955769b51a57"
+    },
+    {
+      "package_path": "code/diffsynth/diffusion/loss.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/diffusion/loss.py",
+      "sha256": "8560cac9ac15986d34d34f9771e3325e029f0673419fd3d4d48ef813fdab301e"
+    },
+    {
+      "package_path": "code/diffsynth/diffusion/parsers.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/diffusion/parsers.py",
+      "sha256": "8f5a2aa81df6515b0f226243ce24437498cb1f8003aa8ada5ac780a156968c71"
+    },
+    {
+      "package_path": "code/diffsynth/diffusion/runner.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/diffusion/runner.py",
+      "sha256": "f8fb091708a057bd94c1fa7979b5aa7809d1728aea8f2933413df4e2c95200f4"
+    },
+    {
+      "package_path": "code/diffsynth/diffusion/training_module.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/diffusion/training_module.py",
+      "sha256": "fad9c4260c45099aebbdb7256a89ef67ecaa0ca6f070e31962d178405d3ff3c3"
+    },
+    {
+      "package_path": "code/diffsynth/models/dinov3_image_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/dinov3_image_encoder.py",
+      "sha256": "9c12b188f71cc9526ee55d8e72a6ef15c908b0a304e216651aba58b808e11d02"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux2_dit.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux2_dit.py",
+      "sha256": "c4a59199421eea89363a27165183a2dc7bae5218d6eb571f1cfad95043acf7a4"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux2_text_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux2_text_encoder.py",
+      "sha256": "25060315645c5a47d33a72187830c10afb7d26c5b437af5c77871efa480ff8e3"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux2_vae.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux2_vae.py",
+      "sha256": "ca43f112c4af50fe6fc6eb0da2fdaca9ddb45b7beded7ad2e4fbf7dc3d79fdf8"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux_controlnet.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux_controlnet.py",
+      "sha256": "79525c9112139e6097dfcbca15f888c29ed5581d6cee907cfa0ba38b1a7b5128"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux_dit.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux_dit.py",
+      "sha256": "97ecc71a953c51abf7ece89a4757e163b80f1c72d2b4b194675b79f2a2d1cecd"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux_infiniteyou.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux_infiniteyou.py",
+      "sha256": "4566e1eda32b5641d5c3046b9466e2c3e4a4d4b4602033509634e8a8802f24a1"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux_ipadapter.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux_ipadapter.py",
+      "sha256": "c62c52a0b90bf5c7e5ed7a07a907efbd4bbcd8c2da27218462d5acab1e7ec3d3"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux_lora_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux_lora_encoder.py",
+      "sha256": "c5a70d6fe2c91f5ce4306d2d1f4bb3cfbbe1fb7748458b1cd519506da0298767"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux_lora_patcher.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux_lora_patcher.py",
+      "sha256": "776caf9e51c91ecadf0d0a2a440e5c389e2d5ded7b1c9503cad33781b69cc8f2"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux_text_encoder_clip.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux_text_encoder_clip.py",
+      "sha256": "a40923281e05cbd1dbdc40a2bccc349fbd9cebf027f31c63200bc8ac30b42e88"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux_text_encoder_t5.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux_text_encoder_t5.py",
+      "sha256": "5523154ed1b4b1573b4a3488164207b40d8ba37206a4932fec793688c2381d7e"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux_vae.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux_vae.py",
+      "sha256": "64449ce7b6a31717d234a205a46fcc067de256ad9bcbc5f789c78c8dc574326c"
+    },
+    {
+      "package_path": "code/diffsynth/models/flux_value_control.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/flux_value_control.py",
+      "sha256": "bcb43964b74bc107c2cda30b03956d1868e1c6e3f2b215723cb9bca0d641b173"
+    },
+    {
+      "package_path": "code/diffsynth/models/general_modules.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/general_modules.py",
+      "sha256": "d0f56259f50d767253f21c49649eb2cc7e074539ea5b8d0317ab8fd1c725585f"
+    },
+    {
+      "package_path": "code/diffsynth/models/longcat_video_dit.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/longcat_video_dit.py",
+      "sha256": "3892070567923409577024cff21f8ef5d76ad01eec06c6fc06457de7a043269c"
+    },
+    {
+      "package_path": "code/diffsynth/models/model_loader.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/model_loader.py",
+      "sha256": "2601ced967947dd473c002c2f2980791c5f9585dee1036ac3686ac6f0993359e"
+    },
+    {
+      "package_path": "code/diffsynth/models/nexus_gen.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/nexus_gen.py",
+      "sha256": "3a6da344ed27e80ae8b05ce8a0257ad9b06f263ba95ad93432723183b3b51daa"
+    },
+    {
+      "package_path": "code/diffsynth/models/nexus_gen_ar_model.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/nexus_gen_ar_model.py",
+      "sha256": "6274dab541005d6dc0f1f4c5234ac911d3f6ca29c33efd9866dc8425ca7bc34c"
+    },
+    {
+      "package_path": "code/diffsynth/models/nexus_gen_projector.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/nexus_gen_projector.py",
+      "sha256": "1e5853581a017c24fabea707783b825f4f4464eb28867f6b4c48bedb354b7427"
+    },
+    {
+      "package_path": "code/diffsynth/models/qwen_image_controlnet.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/qwen_image_controlnet.py",
+      "sha256": "02302a06c05a0a66a6ac227f52af378b898cf22116b4edcca43c67ef7b08b1e2"
+    },
+    {
+      "package_path": "code/diffsynth/models/qwen_image_dit.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/qwen_image_dit.py",
+      "sha256": "e3a33142615f96b18f9a04dfb17461460c84e65bba2d99374d5c4125f4f6d36c"
+    },
+    {
+      "package_path": "code/diffsynth/models/qwen_image_image2lora.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/qwen_image_image2lora.py",
+      "sha256": "c2de06f29009b64549adca69704c7577b4ad991891d7352a1717d7b76a895f97"
+    },
+    {
+      "package_path": "code/diffsynth/models/qwen_image_text_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/qwen_image_text_encoder.py",
+      "sha256": "b88930079597938ef50641e2a02fe8af98a68761c35c5e659f8c9d0e6a2de5e2"
+    },
+    {
+      "package_path": "code/diffsynth/models/qwen_image_vae.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/qwen_image_vae.py",
+      "sha256": "4cf2ddd5cc467d18ed5757a5b4f793a612a82c3891ed5aaff697719d074c72ee"
+    },
+    {
+      "package_path": "code/diffsynth/models/sd_text_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/sd_text_encoder.py",
+      "sha256": "cec55e832318ffb84a5b451a64776236666134a2031955101096db88eaff7407"
+    },
+    {
+      "package_path": "code/diffsynth/models/siglip2_image_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/siglip2_image_encoder.py",
+      "sha256": "567dce6ac6a967b00d638304996362096037db063ae185963c0a7e35ce7e4fa3"
+    },
+    {
+      "package_path": "code/diffsynth/models/step1x_connector.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/step1x_connector.py",
+      "sha256": "463eda018a395ed7a912ff12802444d80b90d5de531b0c4a868c2639754870f8"
+    },
+    {
+      "package_path": "code/diffsynth/models/step1x_text_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/step1x_text_encoder.py",
+      "sha256": "e747ea6fd5c06d10b732b72ac63ff9406b9bd7dacfd10f271681234d0d017e09"
+    },
+    {
+      "package_path": "code/diffsynth/models/wan_video_animate_adapter.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wan_video_animate_adapter.py",
+      "sha256": "3b0a3fda39a1b7c76b7f4ce87428054bc6b43eb990bf2520f09e207ee88563a1"
+    },
+    {
+      "package_path": "code/diffsynth/models/wan_video_camera_controller.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wan_video_camera_controller.py",
+      "sha256": "2bad958eb9893105cc7215a4bb91b2c039bde5eb6af8ddf0f02c09e6f7883d61"
+    },
+    {
+      "package_path": "code/diffsynth/models/wan_video_dit.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wan_video_dit.py",
+      "sha256": "748dab1a41168a9fecfd42dee84933d24bed8f389fd9178ba597178531d0376b"
+    },
+    {
+      "package_path": "code/diffsynth/models/wan_video_dit_s2v.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wan_video_dit_s2v.py",
+      "sha256": "26f3ce3bdcc13499ccb66a1b5aa99090f40e84af9803b83ea8299ed8f80b4e64"
+    },
+    {
+      "package_path": "code/diffsynth/models/wan_video_image_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wan_video_image_encoder.py",
+      "sha256": "77a6f63125512975486c9af8c795350c7b2799062887e424e8d589f366135b3d"
+    },
+    {
+      "package_path": "code/diffsynth/models/wan_video_mot.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wan_video_mot.py",
+      "sha256": "5b1984175202c6fda81645716b0cd475b916d6e13aab3ab01156e8973c5155bc"
+    },
+    {
+      "package_path": "code/diffsynth/models/wan_video_motion_controller.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wan_video_motion_controller.py",
+      "sha256": "15c2288c1e64a08d24d5e231a33cdf40197ede221231f88ae9ad2f1a43772af1"
+    },
+    {
+      "package_path": "code/diffsynth/models/wan_video_text_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wan_video_text_encoder.py",
+      "sha256": "ef77408e83076f149df546212a026f17d4cd83cdeaaf70744560b2a98752c2df"
+    },
+    {
+      "package_path": "code/diffsynth/models/wan_video_vace.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wan_video_vace.py",
+      "sha256": "af06bdeafab0a930840b34f3c2ba9323886c56c2d368390ea4bb57dfa97f5ab5"
+    },
+    {
+      "package_path": "code/diffsynth/models/wan_video_vae.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wan_video_vae.py",
+      "sha256": "1678b8e66311a9cf08f95df980b00dc84c497cee7bb99d13146388415967b8ae"
+    },
+    {
+      "package_path": "code/diffsynth/models/wav2vec.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/wav2vec.py",
+      "sha256": "bab70b67d98d8c335d8b23622517d09e1acb52b88cbde6129386917c4f3b67ef"
+    },
+    {
+      "package_path": "code/diffsynth/models/z_image_controlnet.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/z_image_controlnet.py",
+      "sha256": "0b11cc55f69b63ff2865545f14c96923287980bfd69580a2f55b39772ca89531"
+    },
+    {
+      "package_path": "code/diffsynth/models/z_image_dit.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/z_image_dit.py",
+      "sha256": "4eafa789bf34aa86844d44af7a01867540092f7b2a7362517559984bec1a1104"
+    },
+    {
+      "package_path": "code/diffsynth/models/z_image_image2lora.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/z_image_image2lora.py",
+      "sha256": "16f954632a0b4ec343d18b4b45c20643bc1bdbe148087eb15004f1b6f0d94679"
+    },
+    {
+      "package_path": "code/diffsynth/models/z_image_text_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/models/z_image_text_encoder.py",
+      "sha256": "49aeb633dc9d79d63204c31a1dc5fe07cbe77624800945839758e15720e2375f"
+    },
+    {
+      "package_path": "code/diffsynth/pipelines/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/pipelines/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "package_path": "code/diffsynth/pipelines/wan_video.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/pipelines/wan_video.py",
+      "sha256": "c88d768e1e06a311ac80e868610771ef734c142ce4ac5ef14f9a92ca2a759f16"
+    },
+    {
+      "package_path": "code/diffsynth/pipelines/wan_video_paired_rgbd.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/pipelines/wan_video_paired_rgbd.py",
+      "sha256": "2b6f94c55fd33c18eb84bc7e5e3e9fc5e180cd485e1d2e216d65b9ead92d14ae"
+    },
+    {
+      "package_path": "code/diffsynth/pipelines/wan_video_rgbd.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/pipelines/wan_video_rgbd.py",
+      "sha256": "27f94c5d817517c21443320cd406726aaf9609c67d22bdb0ed130b7c9214578e"
+    },
+    {
+      "package_path": "code/diffsynth/pipelines/wan_video_rgbd_reference_depth.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/pipelines/wan_video_rgbd_reference_depth.py",
+      "sha256": "58411e22952e2057e9fe43737ee692c03a3ec69675cb84a6b4baf0b11f0032e4"
+    },
+    {
+      "package_path": "code/diffsynth/utils/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "package_path": "code/diffsynth/utils/controlnet/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/controlnet/__init__.py",
+      "sha256": "b13bf723a8ddad5dfb57cf9ddd195d41ee72b9fd9cd0929740335051597b1b6f"
+    },
+    {
+      "package_path": "code/diffsynth/utils/controlnet/annotator.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/controlnet/annotator.py",
+      "sha256": "a1cd8e68a785d7f4da199ea9810971fe9aac6b252333ea60335160dc65257eac"
+    },
+    {
+      "package_path": "code/diffsynth/utils/controlnet/controlnet_input.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/controlnet/controlnet_input.py",
+      "sha256": "d99ab56533750e4a07d3125a2fa751f130117fdd24990e453610839691727ca3"
+    },
+    {
+      "package_path": "code/diffsynth/utils/data/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/data/__init__.py",
+      "sha256": "7950df93124908f379c90a880efa2d493631577fc81d462f9190cfce37e160ae"
+    },
+    {
+      "package_path": "code/diffsynth/utils/lora/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/lora/__init__.py",
+      "sha256": "ad93fc1668f31d2230f409307db5ea39f3ae2617cc7d371a1e852fcae28737d9"
+    },
+    {
+      "package_path": "code/diffsynth/utils/lora/general.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/lora/general.py",
+      "sha256": "8fc0cc07a7730eadbdd787df68cce6ae9468169f6306030337db1ffd5bf41f19"
+    },
+    {
+      "package_path": "code/diffsynth/utils/lora/merge.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/lora/merge.py",
+      "sha256": "85963271f8ee6a39cb900cfca2a195642292715369139d0906d56f55780ea8c2"
+    },
+    {
+      "package_path": "code/diffsynth/utils/lora/reset_rank.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/lora/reset_rank.py",
+      "sha256": "80e847b97ba9aa55f08e5452645d9119b6f22d4497947fc76f107a3c98a44736"
+    },
+    {
+      "package_path": "code/diffsynth/utils/state_dict_converters/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/state_dict_converters/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "package_path": "code/diffsynth/utils/state_dict_converters/wan_video_dit.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/state_dict_converters/wan_video_dit.py",
+      "sha256": "992dfbb368b2e850aaadb346a857ce7593d85d4fc0fbf66b3f68f1bfddd1b61a"
+    },
+    {
+      "package_path": "code/diffsynth/utils/state_dict_converters/wan_video_image_encoder.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/state_dict_converters/wan_video_image_encoder.py",
+      "sha256": "cce0bd4d5123488240c5e941dfeb96dc604fccfffd12b5d41837204856d05438"
+    },
+    {
+      "package_path": "code/diffsynth/utils/state_dict_converters/wan_video_vae.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/diffsynth/utils/state_dict_converters/wan_video_vae.py",
+      "sha256": "3b1b98e5a06c984455bbde6560abb09cd79cc4d4403b79805835637eced472df"
+    },
+    {
+      "package_path": "code/model.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/model.py",
+      "sha256": "7ffe3a76df7d1c413e1883e9c661aa9404d3ff1490e6ac936214233547f301e2"
+    },
+    {
+      "package_path": "code/model_pose_conditioned_render_queries.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/model_pose_conditioned_render_queries.py",
+      "sha256": "08e5dd5259ccc53181d8da2f2b6469ef22d980139fec1d242db07bcef43f4907"
+    },
+    {
+      "package_path": "code/model_training/__init__.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/model_training/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "package_path": "code/model_training/train.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/model_training/train.py",
+      "sha256": "01ceaaac06703f524e93deee70506ce49d1b538febb5902340c4ba37ab142272"
+    },
+    {
+      "package_path": "code/model_training/train_pose_conditioned_render_queries.py",
+      "source_relative_to_workspace": "third_party/FrameCrafter/model_training/train_pose_conditioned_render_queries.py",
+      "sha256": "03f1058cae9b49e419e74849f11f0ea980e7c7e2c0a72359c5a45fae5a4d791a"
+    },
+    {
+      "package_path": "code/pyproject.toml",
+      "source_relative_to_workspace": "third_party/FrameCrafter/pyproject.toml",
+      "sha256": "f3dbe11c3a698c26d862e5a60f85375c5a9a699f5ae6faf784909c967bde7b5f"
+    },
+    {
+      "package_path": "configs/accelerate_zero2_gpu.yaml",
+      "source_relative_to_workspace": "third_party/FrameCrafter/model_training/io105_original_zero2_gpuopt_bf16.yaml",
+      "sha256": "70617bf34ded8d3549e0a069b4a97cd98b4f7508535c7b4b3e17ae488cfdf34a"
+    },
+    {
+      "package_path": "provenance/run_650k_original.sh.txt",
+      "source_relative_to_workspace": "scripts/run_omnicrafter_q3_250k_hm3d_jhu_balanced_io105.sh",
+      "sha256": "70b1ae9e3a693a2b998c026d3ada8e25fcdb60c6a9a06a34d0953bb15e48891e"
+    },
+    {
+      "package_path": "provenance/run_continuation_original.sh.txt",
+      "source_relative_to_workspace": "scripts/run_omnicrafter_hm3d_jhu_q3_100k_continue_io105.sh",
+      "sha256": "e416aca7ad71ac050af88da5160cf1f1685d25409dfeb9a9e91dc1aae8e71119"
+    },
+    {
+      "package_path": "provenance/run_trainer_original.sh.txt",
+      "source_relative_to_workspace": "scripts/run_framecrafter_model2_large_io95.sh",
+      "sha256": "11ee34553336b3b5a139876351fbfbb25b2668fc5e21e0bcbfb50c9e29f098b9"
+    }
+  ],
+  "all_copied_files_byte_identical": true,
+  "new_files": "Root README, examples, portable scripts, tests, and sharing metadata were added separately."
+}

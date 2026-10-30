@@ -1,0 +1,16 @@
+# Core versions observed in the local environment on 2026-10-19.
+# CPU imports/schema tests are checked; this is NOT a fresh GPU-training certification.
+# Install matching CUDA torch/torchvision separately before using as pip constraints.
+torch==2.8.0
+torchvision==0.23.0
+transformers==5.15.1
+accelerate==1.14.0
+deepspeed==0.19.5
+peft==0.20.0
+numpy==2.4.6
+Pillow==12.3.0
+safetensors==0.8.0
+einops==0.8.2
+modelscope==1.39.1
+datasets==5.0.1
+PyYAML==6.0.3

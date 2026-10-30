@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-19",
+  "scope": "CPU/static validation of a source-only sharing snapshot",
+  "core_imports": "passed: actual inference class and training entry point imported without loading WAN weights",
+  "training_entrypoint_help": "passed",
+  "python_syntax": "passed: all packaged Python files parsed with ast.parse",
+  "unit_tests": {"passed": 18, "failed": 0, "command": "CUDA_VISIBLE_DEVICES='' python -B -m unittest discover -s tests -v"},
+  "relocated_copy_unit_tests": {"passed": 18, "failed": 0},
+  "relocated_cli_checks": [
+    "synthetic fixture generator",
+    "cleanup inference input validation without checkpoint or GPU",
+    "actual 2ref3 dataset loading and ERP rays at 256x512"
+  ],
+  "scalar_metrics": {
+    "historical_function_regression": "exact equality for PSNR, SSIM and WS-PSNR on synthetic 256x512 arrays",
+    "scoring_cli": "passed for three identical prediction/GT pairs at 32x64: PSNR=120, SSIM=1, WS-PSNR=120"
+  },
+  "input_safety": "portable entry points contain no site-specific absolute data/server paths; package contains no external symlinks",
+  "not_run": [
+    "full WAN checkpoint inference",
+    "GPU training or GPU memory-capacity test",
+    "fresh environment installation",
+    "LPIPS/DreamSim model scoring or metric-weight download"
+  ],
+  "notes": [
+    "The inference plumbing test substitutes a mock backbone; it is not an image-quality evaluation.",
+    "Historical server launchers under provenance intentionally retain their original paths and are not portable launchers.",
+    "No production model/training source was edited and no remote training/evaluation job was started."
+  ]
+}

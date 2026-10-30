@@ -1,0 +1,70 @@
+{
+  "benchmark_manifest": "/cis/net/io72a/data/xliu253/hm3d_val_data/benchmarks/hm3d_2ref3_256x512/manifest.json",
+  "benchmark_sets": 423,
+  "benchmark_targets": 1269,
+  "clean_model_images": 5055,
+  "cleanup_render_images": 12690,
+  "context_target_overlap_rows": 21,
+  "context_target_overlap_trajectories": 19,
+  "hm3d_scenes": 85,
+  "manifests": {
+    "val_2ref10_cleanup_all_drops.jsonl": {
+      "bytes": 11842083,
+      "path": "/cis/net/io72a/data/xliu253/hm3d_val_data/val_2ref10_cleanup_all_drops.jsonl",
+      "rows": 12690,
+      "sha256": "43ad254f774486f1ab6a01976fb5f76d652326abe06f2029fdbba1330ff72472"
+    },
+    "val_2ref10_cleanup_drop050.jsonl": {
+      "bytes": 3947361,
+      "path": "/cis/net/io72a/data/xliu253/hm3d_val_data/val_2ref10_cleanup_drop050.jsonl",
+      "rows": 4230,
+      "sha256": "62ffc76b3d58fd7665a76f9301ba01544f123940c402b1f0e4b77d2cba663e99"
+    },
+    "val_2ref10_nvs.jsonl": {
+      "bytes": 3625881,
+      "path": "/cis/net/io72a/data/xliu253/hm3d_val_data/val_2ref10_nvs.jsonl",
+      "rows": 4230,
+      "sha256": "fdf58c78eaef4cc4bdea921849ad2bd3544923976fc4e3edb01780a2927618b5"
+    },
+    "val_2ref1_cleanup_all_drops.jsonl": {
+      "bytes": 3632247,
+      "path": "/cis/net/io72a/data/xliu253/hm3d_val_data/val_2ref1_cleanup_all_drops.jsonl",
+      "rows": 3807,
+      "sha256": "df9d1fc69414bd6922f047a0e67c305425331b31ba06af9d9592f0df8ccba0fa"
+    },
+    "val_2ref1_cleanup_drop050.jsonl": {
+      "bytes": 1210749,
+      "path": "/cis/net/io72a/data/xliu253/hm3d_val_data/val_2ref1_cleanup_drop050.jsonl",
+      "rows": 1269,
+      "sha256": "5e9e74bb130a223e996ba0071b2045665913be761a651fc2a8fd1ff101408d41"
+    },
+    "val_2ref1_nvs.jsonl": {
+      "bytes": 1114305,
+      "path": "/cis/net/io72a/data/xliu253/hm3d_val_data/val_2ref1_nvs.jsonl",
+      "rows": 1269,
+      "sha256": "4efdbb2e7521e8f11b894f966eba31543c10ff61b7adb72afd54758af5e92b66"
+    },
+    "val_2ref3_cleanup_all_drops.jsonl": {
+      "bytes": 3548493,
+      "path": "/cis/net/io72a/data/xliu253/hm3d_val_data/val_2ref3_cleanup_all_drops.jsonl",
+      "rows": 3807,
+      "sha256": "22f3da5556311b96a0e290d136a661ce3cdd5e8146f715c655e22bcb20279f1b"
+    },
+    "val_2ref3_cleanup_drop050.jsonl": {
+      "bytes": 1182831,
+      "path": "/cis/net/io72a/data/xliu253/hm3d_val_data/val_2ref3_cleanup_drop050.jsonl",
+      "rows": 1269,
+      "sha256": "677ce1b9c81f2b28808e78a0a58588b37bff13e1b867a2550b8f203341b34d1c"
+    },
+    "val_2ref3_nvs.jsonl": {
+      "bytes": 1086387,
+      "path": "/cis/net/io72a/data/xliu253/hm3d_val_data/val_2ref3_nvs.jsonl",
+      "rows": 1269,
+      "sha256": "a863b394d5d9c8d8aeb78e3c43eaabb13c38450a8e6f680046ca47e54b34e243"
+    }
+  },
+  "pose_manifest_entries": 423,
+  "runtime_scene_count": 100,
+  "sequences": 423,
+  "status": "complete"
+}

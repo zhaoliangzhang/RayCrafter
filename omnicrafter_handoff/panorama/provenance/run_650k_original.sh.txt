@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Continue OmniCrafter from global step 250000 through step 650000 on io105.
+# Every logical sample contains two clean references and three stored noisy
+# point-cloud renders. Each query independently becomes NVS (exact black,
+# 100% dropout) with probability 0.50; otherwise online cleanup augmentation
+# drops a uniformly sampled integer percentage of pixels from 0 through 99.
+
+ROOT="${PANORAMA_NVS_ROOT:-/cis/home/xliu253/Documents/PanoLagerNVS/panorama_nvs_transfer_20260818/workspace}"
+
+export OUTPUT_DIR="${OUTPUT_DIR:-/cis/net/io81/data/xliu253/framecrafter/OC_2ref3_250000_hm3d_jhu_cleanup_nvs_256x512_continue}"
+export BRANCH_GLOBAL_STEP=250000
+export BRANCH_CHECKPOINT="${BRANCH_CHECKPOINT:-/cis/net/io81/data/xliu253/framecrafter/omnicrafter_100000_hm3d_jhu_cleanup_nvs_256x512_continue/step-250000.safetensors}"
+export ADDITIONAL_TRAIN_STEPS="${ADDITIONAL_TRAIN_STEPS:-400000}"
+export SAVE_STEPS="${SAVE_STEPS:-2000}"
+export GPU_LIST="${GPU_LIST:-0,1,2,3}"
+export TRAIN_BATCH_SIZE="${TRAIN_BATCH_SIZE:-1}"
+export TRAIN_HEIGHT="${TRAIN_HEIGHT:-256}"
+export TRAIN_WIDTH="${TRAIN_WIDTH:-512}"
+
+# There are 232,424 complete non-held-out JHU q3 groups. Match that with a
+# deterministic HM3D subset to obtain an exact 1:1 mixture without repetition.
+export EXPECTED_HM3D_GROUPS=232424
+export EXPECTED_JHU_GROUPS=232424
+export HM3D_PER_JHU=1
+export MANIFEST_SEED=20260905
+
+# The dataset API calls this independent per-query switch nvs_ratio.
+# nvs_probability is the legacy sample-level all-three-queries switch.
+export NVS_PROBABILITY=0.0
+export NVS_RATIO=0.50
+export MIN_QUERY_PIXEL_DROPOUT=0.00
+export MAX_QUERY_PIXEL_DROPOUT=0.99
+export REPORT_SUFFIX="_hm3d1_jhu1_q3_query_nvsratio050_cleanup050_256x512"
+
+exec bash "${ROOT}/scripts/run_omnicrafter_hm3d_jhu_q3_100k_continue_io105.sh"

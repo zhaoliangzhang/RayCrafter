@@ -1,0 +1,14 @@
+{
+  "snapshot_date": "2026-10-28",
+  "copied_sources": {
+    "snapshots/mixed": "/cis/home/xliu253/Documents/PanoLagerNVS/mixed_projection_2ref3_20261023",
+    "snapshots/evaluation": "/cis/home/xliu253/Documents/PanoLagerNVS/mixed_projection_eval_50000_20261028",
+    "panorama": "/cis/home/xliu253/Documents/PanoLagerNVS/OmniCrafter_share_20261019",
+    "panovggt": "/cis/home/xliu253/Documents/PanoLagerNVS/panovggt_two_reference_renderer_20261015"
+  },
+  "extra_evaluation_helper": "/cis/home/xliu253/Documents/PanoLagerNVS/panorama_nvs_transfer_20260818/workspace/baselines/replica_2ref3/score_predictions.py",
+  "cached_training_manifest": "/cis/net/io104a/data/xliu253/omnicrafter_mixed_local_cache/data_manifest/train.jsonl",
+  "evaluation_manifest": "/cis/net/io81/data/xliu253/omniraycrafter/mixed_projection_2ref3_dl3dv100k_hm3d60k_jhu40k_b1_300k_io104/evaluations/step50000_dl3dv_hm3d_replica_jhu_q3_20261028/benchmark/manifest.json",
+  "exclusions": ["image/depth assets", "learned weights", "environment binaries", "__pycache__", "generated predictions"],
+  "destination_status": "Skipjack Slurm identified; account and actual storage paths not supplied; no transfer or job submission"
+}
