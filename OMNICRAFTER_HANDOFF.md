@@ -29,3 +29,10 @@ before making the `*.local.json` / sbatch edits the docs ask for.
 The RGB training cache (~747 GB), the evaluation assets, the Wan2.1 weights and the
 FrameCrafter initialization are not in the package either; `docs/MIGRATION.md` lists
 what to transfer and where.
+
+## Near-depth SCoPE run
+
+The package trains concat or last-query-gauge SCoPE only. xliu253's newer near-depth
+SCoPE experiment (`mixed_neardepth_2ref3_20261029`, running on io100) is in
+[`omnicrafter_neardepth/`](omnicrafter_neardepth/README.md): its code unmodified, plus a
+portable manifest builder and launcher that use this package's manifest and helpers.

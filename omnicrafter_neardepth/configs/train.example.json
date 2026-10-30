@@ -1,0 +1,10 @@
+{
+  "data_dir": "/scratch/jhu/YOUR_PI/YOUR_USER/omnicrafter/neardepth_manifest",
+  "output": "/scratch/jhu/YOUR_PI/YOUR_USER/omnicrafter/runs/mixed_scope_neardepth_q3_b1_100k",
+  "wan_root": "/scratch/jhu/YOUR_PI/YOUR_USER/omnicrafter/weights/wan21",
+  "base_initialization": "/scratch/jhu/YOUR_PI/YOUR_USER/omnicrafter/weights/framecrafter.safetensors",
+  "final_step": 100000,
+  "save_every": 2000,
+  "preflight": true,
+  "triton_cache": null
+}

@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/TencentARC/SCoPE",
+  "commit": "2fa984036004fb564fc2b0e888ce2bd95ab03735",
+  "copied_files": ["scope/encoding.py", "LICENSE.txt"],
+  "modifications_to_vendored_files": "none",
+  "integration": "Q/K-only, zero output projections, alpha=1, original default scale gate, no V residual or log-scale augmentation. FP32 norm reductions supplied by the local adapter. ERP token-center rays use OmniCrafter's original last-camera pose gauge."
+}
