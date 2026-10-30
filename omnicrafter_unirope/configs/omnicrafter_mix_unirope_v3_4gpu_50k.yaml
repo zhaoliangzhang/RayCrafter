@@ -1,0 +1,70 @@
+# OmniCrafter (Wan2.1-I2V-14B + published FrameCrafter LoRA r32) + UniRoPE v3, perspective + panorama.
+# 4xH100, ZeRO-2 bf16, one set per GPU (global batch 4), 50k steps.
+# Model / objective as omnicrafter_scopeff: per-frame VAE, patch embedding cut to its 36 image channels
+# (no Pluecker concat), flow matching on the 3 query latents.
+# Camera as configs/flux3_mix_unirope_v3.yaml: UniRoPE is the only camera module and takes the whole head
+# (120 channels: camera center plus direction and log distance of three patch-corner points at depth, 15
+# coordinates x 4 frequencies; 8 pass through), so Wan's RoPE is not applied. Attention runs once per camera.
+# Poses are relative to the nearest ref, with the second ref at unit distance.
+
+wan_root: /weka/projects/rchella4/zzhan288/FrameCrafter/models
+base_initialization: /weka/projects/rchella4/zzhan288/FrameCrafter/ckpt/framecrafter.safetensors
+lora_rank: 32
+lora_target_modules: q,k,v,o,ffn.0,ffn.2
+
+# As RayRoPE: V and the attention output are transformed too.
+rope_apply_vo: true
+# Patch footprint: c, center direction and three corner points at depth (15 x 4 freqs).
+unirope_footprint: true
+# v3: direction band per query camera, from its angular patch size (longest period 8,
+# shortest 3 patches).
+unirope_adaptive_freqs: true
+sort_refs_by_distance: true
+
+learning_rate: 1.0e-5
+weight_decay: 0.01
+# Depth heads (zero-initialized) get the reference RayRoPE optimizer settings;
+# at the backbone's 1e-5 their sigma stayed at ~3 (depth unknown) for 90k steps.
+depth_head_lr: 4.0e-4
+depth_head_weight_decay: 0.5
+warmup_steps: 500
+max_steps: 50000
+time_limit_hours: 71.5
+seed: 20261030
+
+# Same files as the flux3 mix runs, through the paths dli90 can read. UniRoPE normalizes poses itself and
+# does not need near depth; both files stay so the dropped scenes, and so the training set, match the other runs.
+near_depth_json: /weka/projects/rchella4/zzhan288/data/dl3dv_points/near_depth.json
+# Each query is fully black with probability nvs_ratio. The other queries draw
+# an integer dropout percent from min..max, which stops at 75 so they keep points.
+min_pixel_dropout: 0.0
+max_pixel_dropout: 0.75
+nvs_ratio: 0.5
+train_shards: /weka/projects/rchella4/zzhan288/data/dl3dv_points/train
+val_shards: /weka/projects/rchella4/zzhan288/data/dl3dv_points/test
+image_size: [288, 512]
+num_workers: 1
+
+panorama_ratio: 0.5
+panorama_root: /weka/projects/rchella4/zzhan288/data/framecrafter_5input
+panorama_train_manifests:
+  - manifests/hm3d_train_cleanup_q1.jsonl
+  - manifests/jhu_holdout10_seed20260822/jhu_train_2ref1_excluding_10_scenes.jsonl
+# 10 JHU scenes held out of training.
+panorama_val_manifests:
+  - manifests/jhu_holdout10_seed20260822/jhu_test_2ref1_10_scenes.jsonl
+panorama_near_depth_json: /weka/projects/rchella4/zzhan288/data/framecrafter_5input/near_depth.json
+panorama_image_size: [256, 512]
+
+# 10 dl3dv_points test + 10 JHU held-out sets, each as cleanup and NVS, at 3 timesteps.
+val_sets: 10
+val_t_indices: [250, 500, 750]
+
+output_dir: /weka/projects/rchella4/dli90/omnicrafter_outputs/omnicrafter_mix_unirope_v3_4gpu_50k
+log_interval: 10
+val_interval: 500
+save_interval: 10000
+resume_interval: 2000
+use_wandb: true
+wandb_project: raycrafter
+wandb_run_name: omnicrafter_mix_unirope_v3_4gpu_50k
