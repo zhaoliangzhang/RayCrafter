@@ -28,8 +28,9 @@ backbone: flux2
 #        128-d heads (true for all FLUX.2 variants).
 # flux3: flux.3-image-klein-base (5.5B, undistilled). Refs go in FLUX 3's
 #        reference stream (timestep 0, RoPE l = -1, -2, ...; ref_t_scale is
-#        unused), views in the image stream (l = 0..V-1). rope_type must be
-#        flux. It uses the FLUX.2 VAE unchanged (same ae.safetensors).
+#        unused), views in the image stream (l = 0..V-1). RayRoPE / PRoPE
+#        keep the l axis there (not t). It uses the FLUX.2 VAE unchanged (same
+#        ae.safetensors).
 model_variant: flux.2-klein-4b
 # Local .safetensors for the transformer / VAE. null → download from Hugging
 # Face (black-forest-labs/FLUX.2-klein-4B or flux-3-image-klein-base
@@ -79,8 +80,10 @@ sort_refs_by_distance: true
 # camera_condition:
 #   none  → no Plücker conditioning.
 #   scope → SCoPE: each image token gets the Plücker ray (direction, moment)
-#           through its patch center; a learned projection is added to Q and K
-#           after RoPE in every attention layer, plus a per-frame residual on V.
+#           through its patch center; a learned projection (7→64→dim MLP,
+#           released SCoPE recipe) is added to Q and K after RoPE in every
+#           attention layer, plus a per-frame residual on V. Expects
+#           translations in near-depth units: set near_depth_json for dl3dv_points.
 #   plucker_concat → FrameCrafter / OmniCrafter: the per-pixel Plücker ray map
 #           (16×16 pixels × 6 = 1536 values per token, last camera at the
 #           origin, unit mean camera distance) goes through a zero-initialized
@@ -90,12 +93,38 @@ camera_condition: scope
 # rope_type:
 #   flux    → the backbone's pretrained 4-axis RoPE (t, h, w, l) on all 128 head
 #             channels. Cameras only enter through camera_condition.
-#   rayrope → channels 0:32 keep the pretrained t-axis RoPE (which image);
-#             channels 32:128 are RayRoPE: every token is re-expressed in each
-#             query camera's frame (camera center + 3 rays at a per-token
-#             predicted depth, from a zero-init depth head per block).
-#             Cost: attention runs once per camera (R+V passes per layer).
+#   rayrope → the whole 128-d head (no backbone axis kept): 120 channels are
+#             RayRoPE (5 frequencies), 8 pass through. Every token is
+#             re-expressed in each query camera's frame (camera center + 3 rays
+#             at a per-token predicted depth, from a zero-init depth head per
+#             block). Cost: attention runs once per camera (R+V passes per layer).
+#   prope   → 32 channels keep the pretrained RoPE axis that numbers the
+#             images (t for flux2, l for flux3); the other 96 are PRoPE
+#             (Q·P_iᵀ, K/V·P_j⁻¹, output·P_i, plus x/y RoPE on the patch grid).
+#             One attention pass.
+#   unirope → the whole 128-d head (no backbone axis kept): 126 channels are
+#             RoPE on each token's ray in the query camera's frame (camera
+#             center, full unit direction, point at a predicted depth; 7
+#             frequencies each), 2 pass through. SE(3) only, no intrinsics, so
+#             any camera model with rays works. Per-camera attention and depth
+#             head as RayRoPE.
+#   unirope_anchor → UniRoPE with every token encoded once in camera 0's frame
+#             (the first ref after sorting, as SCoPE anchors its rays): queries
+#             and keys share one encoding, one attention pass per layer. Scores
+#             then depend on the anchor camera's orientation.
+# RayRoPE, PRoPE and UniRoPE rescale poses so camera 1 is at unit distance from camera 0.
 rope_type: rayrope
+# rayrope / unirope / unirope_anchor: also rotate V like K and the attention output
+# back by the query's rotation, so each aggregated value moves by the relative
+# rotation from its key to the query (the RayRoPE paper's default, Table 2 ④).
+# false keeps V untouched, as the backbone RoPE does. PRoPE always transforms V/O.
+rope_apply_vo: false
+# unirope / unirope_anchor: a token is the ray bundle through its patch. The ray
+# generator also returns three corner rays, and the depth point becomes the three
+# corner points at the predicted depth (patch size, in-plane rotation and lens
+# distortion as a 3D surface patch). 15 coordinates × 4 frequencies instead of
+# 9 × 7. false encodes only the center ray.
+unirope_footprint: false
 
 
 # ── Optimization ─────────────────────────────────────────────────────────────
@@ -142,7 +171,7 @@ t_one_prob: 0.5
 # Always: MSE on the predicted velocity of the view tokens (latent space).
 # Optional pixel losses on the one-step clean estimate x0 = z_t - t·v_pred,
 # decoded by the frozen VAE (gradients flow through the decoder). 0 disables.
-lpips_loss_weight: 10.0       # LPIPS-VGG
+lpips_loss_weight: 5.0        # LPIPS-VGG (5: SCoPE ablation of 1 / 5 / 10 on dl3dv_points)
 l1_pixel_loss_weight: 1.0
 # Decode only a random (crop × crop)-token window for the pixel losses, to
 # bound decoder memory. null → decode the full image.
@@ -209,6 +238,10 @@ noise_mode: lerp
 #   sampling keep the stored splat. Cameras are that sample's OpenCV w2c and
 #   pinhole K, so Plücker rays go through the same path as the tars.
 data_format: webdataset
+# dl3dv_points only: per-scene near depth from
+# scripts/estimate_near_depth_dl3dv_points.py; translations are divided by it
+# (SCoPE's normalization) and scenes without an estimate are dropped.
+near_depth_json: null
 min_pixel_dropout: 0.0        # dl3dv_points only
 max_pixel_dropout: 1.0
 nvs_probability: 0.0
@@ -247,21 +280,27 @@ output_dir: outputs/klein4b_scope_rayrope   # config.yaml + checkpoints go here
 # (wandb only).
 log_interval: 500
 val_interval: 500
-# Writes transformer_step<N>.safetensors (bf16). Full fine-tune: whole
-# transformer (~8 GB for 4B). LoRA: adapters + camera modules only.
-save_interval: 5000
+# bf16 weight snapshots for eval: transformer_step<N>.safetensors.
+# Full fine-tune writes the whole transformer. LoRA writes adapters + camera modules.
+save_interval: 20000
+# One rolling checkpoint, output_dir/resume/, overwritten every resume_interval
+# steps (and again on a clean stop). It stores fp32 master weights and AdamW
+# state so a restarted job continues. Delete that directory to start over.
+# Resume needs the same GPU count and shard_optimizer setting.
+resume_interval: 2000
 use_wandb: false
 wandb_project: raycrafter
 wandb_run_name: klein4b_scope_rayrope
 
 
 # ── Resume ───────────────────────────────────────────────────────────────────
-# Checkpoint to start from (a transformer_*.safetensors from this repo; it
-# must match use_lora / camera_condition / rope_type). Optimizer state is not
-# saved, so AdamW restarts.
+# Weight-only start (a transformer_*.safetensors). Ignored when output_dir/resume
+# exists, because that checkpoint already has the weights, AdamW state and the step.
+# The file must match use_lora / camera_condition / rope_type. AdamW starts cold.
 resume_from: null
-# Step that checkpoint finished. Training continues at start_step + 1, so the
-# LR schedule, curriculum and checkpoint names stay on the original timeline.
+# Step that resume_from finished. Ignored when output_dir/resume exists.
+# Training continues at start_step + 1, so the LR schedule, curriculum and
+# checkpoint names stay on the original timeline.
 start_step: 0
 
 

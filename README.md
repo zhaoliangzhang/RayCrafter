@@ -8,7 +8,8 @@ from a degraded render (refinement) or from pure noise (novel-view synthesis).
 The goal is a model that does not depend on one backbone or one camera type:
 backbone code and camera encodings are kept in separate modules. Today there is
 two backbones (FLUX.2 [klein], FLUX 3 Image Klein) and four camera encodings,
-SCoPE, RayRoPE, PRoPE and UniRoPE, for pinhole cameras.
+SCoPE, RayRoPE, PRoPE and UniRoPE, for pinhole cameras and (all but PRoPE)
+equirectangular panoramas.
 
 - **Bridge matching.** `z_t = t·z_src + (1-t)·z_tgt`, where `t=1` is the
   source and `t=0` is clean. The model predicts the velocity `z_src - z_tgt`
@@ -25,8 +26,15 @@ SCoPE, RayRoPE, PRoPE and UniRoPE, for pinhole cameras.
   x/y RoPE on the patch grid, in one attention pass.
 - **UniRoPE** (`rope_type: unirope`, ours). Each token is a ray: RoPE on its
   camera center, full unit direction and predicted-depth point, all moved into
-  each query camera's frame by SE(3) only. Only the ray generator knows the
-  camera model (pinhole now; an equirect generator is in place for panoramas).
+  each query camera's frame by SE(3) only; the point is encoded as its
+  direction and log distance from the query camera (each coordinate's longest
+  period 4× its range, as in RayRoPE). Only the ray generator knows the camera
+  model (pinhole or equirect). With `unirope_footprint: true`, a token is the
+  ray bundle through its patch: the three patch-corner points at depth replace
+  the center point, so patch size, in-plane rotation and lens distortion are
+  encoded too.
+- **V/O** (`rope_apply_vo: true`, RayRoPE / UniRoPE). V is rotated like K and
+  the attention output back by the query's rotation, as in the RayRoPE paper.
 - **Plücker ray concat** (`camera_condition: plucker_concat`, FLUX 3). As in
   FrameCrafter / OmniCrafter: every pixel's Plücker ray (pinhole or equirect),
   pixel-unshuffled to 1536 values per token, goes through a zero-initialized
@@ -34,7 +42,7 @@ SCoPE, RayRoPE, PRoPE and UniRoPE, for pinhole cameras.
   channels. Poses: last camera at the origin, unit mean camera distance.
 - PRoPE keeps the backbone RoPE axis that numbers the images (`t` on FLUX.2,
   `l` on FLUX 3) and replaces the other 96 channels; RayRoPE (120 + 8
-  pass-through) and UniRoPE (126 + 2) replace the whole head. SCoPE starts at zero, so at step 0 it is exactly the
+  pass-through) and UniRoPE (120 + 8) replace the whole head. SCoPE starts at zero, so at step 0 it is exactly the
   pretrained backbone; the RoPE methods change the attention from step 0.
 
 ## Setup

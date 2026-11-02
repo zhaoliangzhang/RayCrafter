@@ -48,8 +48,9 @@ class Config:
     # instead of only its center point. Off by default for older checkpoints.
     unirope_footprint: bool = False
     # UniRoPE v3: direction frequencies per query camera, from its angular patch
-    # size (no aliasing on 360° panoramas). Off by default for older checkpoints.
-    unirope_adaptive_freqs: bool = False
+    # size (no aliasing on 360° panoramas). On by default; configs of runs trained
+    # before v3 set it to false explicitly.
+    unirope_adaptive_freqs: bool = True
 
     # ── Training ───────────────────────────────────────────────────────────
     batch_size: int = 1
