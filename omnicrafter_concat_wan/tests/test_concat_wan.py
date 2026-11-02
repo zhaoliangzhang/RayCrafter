@@ -13,7 +13,8 @@ HERE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(HERE))
 import concat_wan_paths  # noqa: E402,F401
 from concat_wan_config import Config  # noqa: E402
-from concat_wan_model import IN_CHANNELS, RAY_CHANNELS, WAN_CHANNELS, expand_patch_embedding, to_concat_set  # noqa: E402
+from concat_wan_model import (COLLECTIVE_TIMEOUT, IN_CHANNELS, RAY_CHANNELS, WAN_CHANNELS,  # noqa: E402
+                              expand_patch_embedding, extend_collective_timeout, to_concat_set)
 from diffsynth.core.data.dataset import (get_equirectangular_plucker_rays, get_plucker_rays,  # noqa: E402
                                          normalize_w2c_make_cam_last_origin)
 from diffsynth.diffusion.training_module import DiffusionTrainingModule  # noqa: E402
@@ -137,6 +138,17 @@ class RayMapTest(unittest.TestCase):
         scaled['camera_c2w'][..., :3, 3] /= 3.39
         difference = to_concat_set(batch)['raymap'] - to_concat_set(scaled)['raymap']
         self.assertLess(difference.abs().max().item(), 1e-5)
+
+
+class CollectiveTimeoutTest(unittest.TestCase):
+    def test_new_nccl_groups_take_the_long_timeout(self):
+        c10d = torch.distributed.distributed_c10d
+        saved = c10d.default_pg_nccl_timeout
+        try:
+            extend_collective_timeout()
+            self.assertEqual(c10d._get_default_timeout(c10d.Backend.NCCL), COLLECTIVE_TIMEOUT)
+        finally:
+            c10d.default_pg_nccl_timeout = saved
 
 
 class ConfigTest(unittest.TestCase):

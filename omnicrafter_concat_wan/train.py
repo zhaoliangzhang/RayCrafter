@@ -44,7 +44,8 @@ from safetensors.torch import load_file, save_file
 
 import concat_wan_paths  # noqa: F401
 from concat_wan_config import Config
-from concat_wan_model import IN_CHANNELS, RAY_CHANNELS, WAN_CHANNELS, ConcatWanTrainingModule, to_concat_set
+from concat_wan_model import (COLLECTIVE_TIMEOUT, IN_CHANNELS, RAY_CHANNELS, WAN_CHANNELS, ConcatWanTrainingModule,
+                              extend_collective_timeout, to_concat_set)
 from scopeff_model import black_fraction
 from common import model_paths
 from frozen_encoders import release_frozen_encoders
@@ -271,11 +272,13 @@ def main():
         return
 
     from accelerate import Accelerator
-    from accelerate.utils import DistributedType, set_seed
+    from accelerate.utils import DistributedType, InitProcessGroupKwargs, set_seed
     torch.set_num_threads(4)
     # DeepSpeed does not own a LambdaLR, so accelerate's default would step it num_processes times per
     # training step and shorten the warmup by that factor. One step per training step, for any world size.
-    accelerator = Accelerator(gradient_accumulation_steps=1, step_scheduler_with_optimizer=False)
+    extend_collective_timeout()
+    accelerator = Accelerator(gradient_accumulation_steps=1, step_scheduler_with_optimizer=False,
+                              kwargs_handlers=[InitProcessGroupKwargs(timeout=COLLECTIVE_TIMEOUT)])
     assert accelerator.distributed_type == DistributedType.DEEPSPEED
     # One set per GPU; the 50k run uses 4 GPUs (global batch 4), a smoke test may use fewer.
     assert accelerator.mixed_precision == 'bf16'
@@ -374,6 +377,10 @@ def main():
     zero = accelerator.deepspeed_config['zero_optimization']
     assert zero['stage'] == 2 and zero.get('offload_optimizer', {}).get('device', 'none') == 'none'
     assert model.train_micro_batch_size_per_gpu() == 1 and model.train_batch_size() == accelerator.num_processes
+    if is_main:
+        group = getattr(model.optimizer, 'dp_process_group', None)
+        print(f"{now()} collective timeouts: gradient group {getattr(getattr(group, 'options', None), '_timeout', None)}",
+              flush=True)
 
     if meta:
         accelerator.load_state(str(resume_dir), load_module_strict=False)

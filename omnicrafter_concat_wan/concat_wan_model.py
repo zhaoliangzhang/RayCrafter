@@ -6,7 +6,10 @@
 is exactly Wan. ``to_concat_set`` turns one batch of RayCrafter's ``dl3dv_points`` / panorama
 loaders into the set dict ``encode_set`` reads.
 """
+from datetime import timedelta
+
 import torch
+import torch.distributed.distributed_c10d as c10d
 from einops import rearrange
 from torch import nn
 
@@ -21,6 +24,15 @@ WAN_CHANNELS = 36
 LATENT_PATCH = 8
 RAY_CHANNELS = 6 * LATENT_PATCH * LATENT_PATCH
 IN_CHANNELS = WAN_CHANNELS + RAY_CHANNELS
+# Data reads over NFS have stalled for over 10 minutes. A rank waiting that long in a collective
+# should wait out the stall, not kill the run.
+COLLECTIVE_TIMEOUT = timedelta(hours=2)
+
+
+def extend_collective_timeout():
+    """Groups made without a timeout, as ZeRO's gradient group is, take torch's 10-minute NCCL
+    default. The world group's timeout is given to ``Accelerator`` separately."""
+    c10d.default_pg_nccl_timeout = COLLECTIVE_TIMEOUT
 
 
 def expand_patch_embedding(dit):
