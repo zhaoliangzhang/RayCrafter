@@ -9,6 +9,7 @@ mean over the 4 ranks; ``rank0_*`` describe only rank 0's set, so they are not u
 """
 import argparse
 import json
+import secrets
 import time
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +27,7 @@ def main():
     config = json.loads((args.run/'runtime/train_config.json').read_text())
     request = json.loads((args.run/'portable_request.json').read_text())
     id_file = args.run/'logs/wandb_id'
-    run_id = id_file.read_text().strip() if id_file.exists() else wandb.util.generate_id()
+    run_id = id_file.read_text().strip() if id_file.exists() else secrets.token_hex(4)
     id_file.write_text(run_id+'\n')
     run = wandb.init(entity=args.entity, project=args.project, id=run_id, resume='allow', name=args.run.name,
                      config={**config, 'trainer': 'omnicrafter_handoff/snapshots/mixed/train.py (xliu253, unmodified)',
