@@ -1,0 +1,13 @@
+{
+  "architecture": "concat",
+  "data_dir": "/cis/net/io81/data/xliu253/omniraycrafter/mixed_projection_2ref3_dl3dv100k_hm3d60k_jhu40k_b1_300k_io104/data_manifest",
+  "output": "/cis/net/io95/data/dli/raycrafter_runs/omnicrafter_mix_concat_wan_xliurecipe_4gpu_50k",
+  "wan_root": "/cis/net/io95/data/dli/models/wan21",
+  "base_initialization": "/cis/net/io95/data/dli/raycrafter_runs/omnicrafter_mix_concat_wan_4gpu_50k/initialization/wan_step0.safetensors",
+  "restore_checkpoint": null,
+  "initial_step": 0,
+  "final_step": 50000,
+  "save_every": 2000,
+  "num_gpus": 4,
+  "batch_per_gpu": 1
+}
