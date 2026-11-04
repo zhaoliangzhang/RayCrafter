@@ -46,6 +46,27 @@ sbatch omnicrafter_scope_wan/train_4gpu.sbatch
 
 The output directory has the same layout as the scope-ff run's, with `initialization/wan_step0.safetensors` in place of the converted FrameCrafter file. See [its README](../omnicrafter_scopeff/README.md).
 
+## Variant: xliu253's task mix and LR start
+
+`configs/omnicrafter_mix_scope_wan_xliutasks_4gpu_50k.yaml` is the same run with three settings from xliu253's mixed recipe (`omnicrafter_handoff/docs/EXPERIMENTS.md`):
+
+| | base config | xliutasks |
+|---|---|---|
+| NVS | each query black with p 0.5 (`nvs_ratio`) | each set NVS with p 0.5, all three queries black together (`nvs_probability`) |
+| cleanup dropout | 0–75% | 0–100%, so a cleanup query can be black too |
+| LR start | 500-step linear warmup | `lr_schedule: constant_lr`: 1/3 of the LR for optimizer steps 1–2, then 1e-5 |
+
+xliu's trainer prepares torch's `ConstantLR` (1/3 for 5 scheduler steps) with accelerate's defaults, which step it once per process per training step. On 4 GPUs the reduced LR therefore lasts 2 optimizer steps, not 5. `train.lr_lambda` reproduces that.
+
+It runs on `rchella4_videolincs`:
+
+```bash
+CONFIG=omnicrafter_scope_wan/configs/omnicrafter_mix_scope_wan_xliutasks_4gpu_50k.yaml \
+  sbatch -A rchella4_videolincs -J oc-scope-wan-xt-4g omnicrafter_scope_wan/train_4gpu.sbatch
+```
+
+Resubmit the same command to continue.
+
 ## Resume
 
 As the scope-ff run: resubmit the same job after a walltime stop or a crash. It needs 4 GPUs, the same LoRA and SCoPE settings, the same `seed`, and a DeepSpeed version that reads the saved state. To train past `max_steps`, raise it and resubmit.

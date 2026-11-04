@@ -67,6 +67,19 @@ def now():
     return datetime.now().astimezone().isoformat(timespec='seconds')
 
 
+def lr_lambda(cfg, world):
+    """The LR factor after ``done`` optimizer steps.
+
+    ``warmup``: optimizer step k (1-based) uses min(1, k / warmup_steps) of the LR, as flux3's _lr.
+    ``constant_lr``: xliu's start. Its trainer prepares torch's ``ConstantLR`` (1/3 for 5 scheduler
+    steps) with accelerate's defaults, which step it once per process per training step. So the
+    reduced LR lasts while ``world * done < 5``: optimizer steps 1-2 on 4 GPUs."""
+    if cfg.lr_schedule == 'constant_lr':
+        return lambda done: 1.0 / 3 if world * done < 5 else 1.0
+    warmup = max(1, cfg.warmup_steps)
+    return lambda done: min(1.0, (done + 1) / warmup)
+
+
 def wan_patch_embedding(wan_root):
     """Wan's own patch embedding weights, read from the DiT shard that holds them."""
     for shard in json.loads(model_paths(wan_root)[0])[0]:
@@ -81,7 +94,8 @@ def wan_patch_embedding(wan_root):
 def build_train_loader(cfg, rank, world, start_step):
     common = dict(num_views=3, ref_size=2, batch_size=1, num_workers=cfg.num_workers, use_pose=True,
                   shuffle=True, min_pixel_dropout=cfg.min_pixel_dropout,
-                  max_pixel_dropout=cfg.max_pixel_dropout, nvs_ratio=cfg.nvs_ratio)
+                  max_pixel_dropout=cfg.max_pixel_dropout, nvs_ratio=cfg.nvs_ratio,
+                  nvs_probability=cfg.nvs_probability)
     points = make_points_dataloader(cfg.train_shards, image_size=tuple(cfg.image_size),
                                     near_depth_json=cfg.near_depth_json, **common)
     panoramas = make_panorama_dataloader(root=cfg.panorama_root, manifests=cfg.panorama_train_manifests,
@@ -159,7 +173,9 @@ def save_adapter(accelerator, module, out, step, cfg, init_sha):
             'resolutions_hw': f'panorama={cfg.panorama_image_size},perspective={cfg.image_size}',
             'model': 'omnicrafter-2ref3-scope-wan-init', 'batch_per_gpu': '1', 'global_batch': str(accelerator.num_processes),
             'pose_normalization': 'per_scene_near_depth_relative_to_nearest_ref',
-            'nvs_ratio': str(cfg.nvs_ratio), 'initialization_sha256': init_sha})
+            'nvs_ratio': str(cfg.nvs_ratio), 'nvs_probability': str(cfg.nvs_probability),
+            'pixel_dropout': f'{cfg.min_pixel_dropout}..{cfg.max_pixel_dropout}', 'lr_schedule': cfg.lr_schedule,
+            'initialization_sha256': init_sha})
         temporary.replace(destination)
         print(f'{now()} saved {destination}', flush=True)
     accelerator.wait_for_everyone()
@@ -255,6 +271,8 @@ def dry_run(cfg):
     print(f'Wan patch embedding: {tuple(patch.shape)}, {patch.dtype}')
     loader = build_train_loader(cfg, 0, 1, 0)
     val_sets = build_val_sets(cfg, 0, 1)
+    factor = lr_lambda(cfg, 4)
+    print(f'{cfg.lr_schedule}: LR factor for optimizer steps 1-6 on 4 GPUs ' + ' '.join(f'{factor(d):.3g}' for d in range(6)))
     print(f'validation: {len(val_sets)} sets x {len(cfg.val_t_indices)} timesteps x (cleanup, nvs)')
     for source in loader.loaders:
         data = to_omnicrafter(next(iter(source)), SCOPE_KWARGS['patch_size'], cfg.sort_refs_by_distance)
@@ -367,9 +385,7 @@ def main():
         print(f'{now()} rank={rank} frozen encoders: {json.dumps(encoder_report)}', flush=True)
 
     optimizer = torch.optim.AdamW(module.trainable_modules(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay)
-    warmup = max(1, cfg.warmup_steps)
-    # Optimizer step k (1-based) uses min(1, k / warmup) of the LR, as flux3's _lr.
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda done: min(1.0, (done + 1) / warmup))
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda(cfg, accelerator.num_processes))
     model, optimizer, scheduler = accelerator.prepare(module, optimizer, scheduler)
     module = accelerator.unwrap_model(model)
     module.pipe.dit.train()

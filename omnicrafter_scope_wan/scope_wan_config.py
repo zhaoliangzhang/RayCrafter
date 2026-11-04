@@ -22,6 +22,7 @@ class Config:
     learning_rate: float = 1e-5
     weight_decay: float = 0.01
     warmup_steps: int = 500           # linear, then constant
+    lr_schedule: str = 'warmup'       # or 'constant_lr', xliu's start (train.lr_lambda); needs warmup_steps 0
     max_steps: int = 50000
     time_limit_hours: Optional[float] = None
     seed: int = 20261030
@@ -30,7 +31,8 @@ class Config:
     near_depth_json: str = ''
     min_pixel_dropout: float = 0.0
     max_pixel_dropout: float = 0.75
-    nvs_ratio: float = 0.5
+    nvs_ratio: float = 0.5            # each query black on its own
+    nvs_probability: float = 0.0      # all three queries black together (xliu's per-set switch)
     train_shards: str = ''
     val_shards: str = ''
     image_size: List[int] = field(default_factory=lambda: [288, 512])
@@ -70,8 +72,14 @@ class Config:
             raise ValueError('panorama_train_manifests and panorama_val_manifests are required')
         if not 0.0 <= self.min_pixel_dropout <= self.max_pixel_dropout <= 1.0:
             raise ValueError('pixel dropout must satisfy 0 <= min <= max <= 1')
-        if not 0.0 <= self.nvs_ratio <= 1.0 or not 0.0 <= self.panorama_ratio <= 1.0:
-            raise ValueError('nvs_ratio and panorama_ratio must be in [0, 1]')
+        if not all(0.0 <= v <= 1.0 for v in (self.nvs_ratio, self.nvs_probability, self.panorama_ratio)):
+            raise ValueError('nvs_ratio, nvs_probability and panorama_ratio must be in [0, 1]')
+        if self.nvs_ratio > 0.0 and self.nvs_probability > 0.0:
+            raise ValueError('set nvs_ratio (per query) or nvs_probability (per set), not both')
+        if self.lr_schedule not in ('warmup', 'constant_lr'):
+            raise ValueError(f'lr_schedule must be warmup or constant_lr, got {self.lr_schedule}')
+        if self.lr_schedule == 'constant_lr' and self.warmup_steps:
+            raise ValueError('constant_lr has no warmup; set warmup_steps: 0')
         for name in ('image_size', 'panorama_image_size'):
             h, w = (int(v) for v in getattr(self, name))
             if h % 16 or w % 16:

@@ -21,6 +21,7 @@ from scope_wan_config import Config  # noqa: E402
 from scopeff_model import PATCH, to_omnicrafter  # noqa: E402
 
 CONFIG = HERE/'configs/omnicrafter_mix_scope_wan_4gpu_50k.yaml'
+XLIU = HERE/'configs/omnicrafter_mix_scope_wan_xliutasks_4gpu_50k.yaml'
 PLAIN = dict(mlp_hidden=64, dir_freqs=0, patch_size=False)
 
 
@@ -120,6 +121,50 @@ class ConfigTest(unittest.TestCase):
                     Config.from_yaml(path)
             finally:
                 path.unlink()
+
+
+def config_with(source, path, **changes):
+    path.write_text(yaml.safe_dump({**yaml.safe_load(source.read_text()), **changes}))
+    try:
+        return Config.from_yaml(path)
+    finally:
+        path.unlink()
+
+
+class XliuTaskMixTest(unittest.TestCase):
+    def test_config(self):
+        cfg = Config.from_yaml(XLIU)
+        self.assertEqual((cfg.nvs_ratio, cfg.nvs_probability, cfg.min_pixel_dropout, cfg.max_pixel_dropout),
+                         (0.0, 0.5, 0.0, 1.0))
+        self.assertEqual((cfg.lr_schedule, cfg.warmup_steps), ('constant_lr', 0))
+        # The fields a resume checks are the first run's, so its saved states still load.
+        self.assertEqual(cfg.fingerprint(), Config.from_yaml(CONFIG).fingerprint())
+        old = Config.from_yaml(CONFIG)
+        self.assertEqual((old.nvs_probability, old.lr_schedule, old.warmup_steps), (0.0, 'warmup', 500))
+        path = Path(__file__).with_name('.xliu_config.yaml')
+        with self.assertRaises(ValueError):
+            config_with(XLIU, path, nvs_ratio=0.5)
+        with self.assertRaises(ValueError):
+            config_with(XLIU, path, warmup_steps=500)
+
+    def test_constant_lr_start_matches_accelerate(self):
+        from train import lr_lambda
+        cfg = Config.from_yaml(XLIU)
+        for world, reduced in ((1, 5), (2, 3), (4, 2)):
+            optimizer = torch.optim.SGD([torch.zeros(1, requires_grad=True)], lr=1e-5)
+            reference = torch.optim.lr_scheduler.ConstantLR(optimizer)
+            factor = lr_lambda(cfg, world)
+            self.assertEqual(sum(factor(done) < 1 for done in range(20)), reduced)
+            for done in range(20):
+                self.assertAlmostEqual(optimizer.param_groups[0]['lr'], 1e-5 * factor(done), places=15)
+                optimizer.step()
+                for _ in range(world):  # accelerate's AcceleratedScheduler: num_processes steps per step
+                    reference.step()
+
+    def test_warmup_unchanged(self):
+        from train import lr_lambda
+        factor = lr_lambda(Config.from_yaml(CONFIG), 4)
+        self.assertEqual([factor(done) for done in (0, 249, 499, 500)], [1 / 500, 0.5, 1.0, 1.0])
 
 
 if __name__ == '__main__':
