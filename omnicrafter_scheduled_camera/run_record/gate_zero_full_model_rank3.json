@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "rank": 3,
+  "projection": "perspective",
+  "task": "cleanup",
+  "image_hw": [
+    288,
+    512
+  ],
+  "bitwise_equal": true,
+  "max_abs_error": 0.0,
+  "gate": 0.0,
+  "RNG_unchanged": true,
+  "optimizer_updates": 0
+}

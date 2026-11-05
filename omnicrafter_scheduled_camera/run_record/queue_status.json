@@ -1,0 +1,64 @@
+{
+  "time": "2026-11-04T21:10:03.866740-05:00",
+  "stage": "launching_user_requested_shared_training",
+  "pid": 968627,
+  "host": "io105",
+  "variant": "unirope",
+  "gpu_list": "0,1,2,3",
+  "poll_seconds": 60,
+  "wait_timeout": null,
+  "log": "/cis/net/io81/data/xliu253/omniraycrafter/mixed_concat_scheduled_unirope_q3center_50kinit_dl3dv100k_hm3d60k_jhu40k_b1_plus300k_io105/logs/train_20261104_210838.log",
+  "idle": false,
+  "gpus": [
+    {
+      "index": 0,
+      "uuid": "GPU-314252fd-a4aa-427f-3904-33f7505866b2",
+      "used_mib": 53297,
+      "utilization": 96
+    },
+    {
+      "index": 1,
+      "uuid": "GPU-20b7af2c-60c3-4d8e-e663-7b010613915d",
+      "used_mib": 53491,
+      "utilization": 100
+    },
+    {
+      "index": 2,
+      "uuid": "GPU-f98a7919-0878-086c-e3da-080c5d4c17da",
+      "used_mib": 53417,
+      "utilization": 99
+    },
+    {
+      "index": 3,
+      "uuid": "GPU-738b5b04-56d0-88e2-adbb-8f9e9620a0c6",
+      "used_mib": 53289,
+      "utilization": 100
+    }
+  ],
+  "compute_processes": [
+    {
+      "uuid": "GPU-314252fd-a4aa-427f-3904-33f7505866b2",
+      "pid": 663291
+    },
+    {
+      "uuid": "GPU-20b7af2c-60c3-4d8e-e663-7b010613915d",
+      "pid": 663292
+    },
+    {
+      "uuid": "GPU-f98a7919-0878-086c-e3da-080c5d4c17da",
+      "pid": 663293
+    },
+    {
+      "uuid": "GPU-738b5b04-56d0-88e2-adbb-8f9e9620a0c6",
+      "pid": 663294
+    }
+  ],
+  "free_mib": {
+    "GPU-314252fd-a4aa-427f-3904-33f7505866b2": 89871,
+    "GPU-20b7af2c-60c3-4d8e-e663-7b010613915d": 89677,
+    "GPU-f98a7919-0878-086c-e3da-080c5d4c17da": 89751,
+    "GPU-738b5b04-56d0-88e2-adbb-8f9e9620a0c6": 89879
+  },
+  "user_requested_shared_launch": true,
+  "existing_training_untouched": true
+}

@@ -1,0 +1,27 @@
+{
+  "passed": true,
+  "variant": "unirope",
+  "rank": 0,
+  "optimizer_device": "cuda",
+  "zero_stage": 2,
+  "real_resolution_grids": true,
+  "compiled_geometry": true,
+  "new_parameters_updated": true,
+  "cases": [
+    {
+      "projection": "panorama",
+      "strength": 0.0001,
+      "loss": 0.32842180132865906
+    },
+    {
+      "projection": "perspective",
+      "strength": 0.2,
+      "loss": 0.32332494854927063
+    },
+    {
+      "projection": "panorama",
+      "strength": 1.0,
+      "loss": 0.3281424939632416
+    }
+  ]
+}

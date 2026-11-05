@@ -1,0 +1,8 @@
+{
+  "rank": 0,
+  "optimizer_state_device": "cuda",
+  "zero_stage": 2,
+  "batch_per_gpu": 1,
+  "global_batch": 4,
+  "trainable_tensors": 882
+}

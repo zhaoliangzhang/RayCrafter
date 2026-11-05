@@ -1,0 +1,15 @@
+{
+  "passed": true,
+  "rank": 0,
+  "projection": "panorama",
+  "task": "nvs",
+  "image_hw": [
+    256,
+    512
+  ],
+  "bitwise_equal": true,
+  "max_abs_error": 0.0,
+  "gate": 0.0,
+  "RNG_unchanged": true,
+  "optimizer_updates": 0
+}

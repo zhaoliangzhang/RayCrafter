@@ -1,0 +1,93 @@
+{
+  "time": "2026-11-04T21:10:03.419237-05:00",
+  "command": [
+    "/cis/home/xliu253/micromamba/envs/framecrafter/bin/python",
+    "-B",
+    "-u",
+    "-m",
+    "torch.distributed.run",
+    "--standalone",
+    "--nnodes=1",
+    "--nproc_per_node=4",
+    "/cis/home/xliu253/Documents/PanoLagerNVS/omnicrafter_scheduled_camera_20261104/train.py",
+    "--wan",
+    "/dev/shm/xliu253_mixed_scope_20261028/wan21",
+    "--initialization-checkpoint",
+    "/cis/net/io81/data/xliu253/omniraycrafter/mixed_projection_2ref3_dl3dv100k_hm3d60k_jhu40k_b1_300k_io104/step-50000.safetensors",
+    "--manifest",
+    "/dev/shm/xliu253_scheduled_unirope_20261104/train.jsonl",
+    "--offsets",
+    "/dev/shm/xliu253_scheduled_unirope_20261104/train.offsets.npy",
+    "--output",
+    "/cis/net/io81/data/xliu253/omniraycrafter/mixed_concat_scheduled_unirope_q3center_50kinit_dl3dv100k_hm3d60k_jhu40k_b1_plus300k_io105",
+    "--max-steps",
+    "350000",
+    "--save-every",
+    "2000",
+    "--ramp-steps",
+    "10000",
+    "--nvs-probability",
+    "0.5",
+    "--path-map",
+    "/cis/home/xliu253/Documents/PanoLagerNVS/omnicrafter_scheduled_camera_20261104/image_path_map.shared.json"
+  ],
+  "log": "/cis/net/io81/data/xliu253/omniraycrafter/mixed_concat_scheduled_unirope_q3center_50kinit_dl3dv100k_hm3d60k_jhu40k_b1_plus300k_io105/logs/train_20261104_210838.log",
+  "gpu_list": "0,1,2,3",
+  "shared_admission": {
+    "idle": false,
+    "gpus": [
+      {
+        "index": 0,
+        "uuid": "GPU-314252fd-a4aa-427f-3904-33f7505866b2",
+        "used_mib": 53297,
+        "utilization": 96
+      },
+      {
+        "index": 1,
+        "uuid": "GPU-20b7af2c-60c3-4d8e-e663-7b010613915d",
+        "used_mib": 53491,
+        "utilization": 100
+      },
+      {
+        "index": 2,
+        "uuid": "GPU-f98a7919-0878-086c-e3da-080c5d4c17da",
+        "used_mib": 53417,
+        "utilization": 99
+      },
+      {
+        "index": 3,
+        "uuid": "GPU-738b5b04-56d0-88e2-adbb-8f9e9620a0c6",
+        "used_mib": 53289,
+        "utilization": 100
+      }
+    ],
+    "compute_processes": [
+      {
+        "uuid": "GPU-314252fd-a4aa-427f-3904-33f7505866b2",
+        "pid": 663291
+      },
+      {
+        "uuid": "GPU-20b7af2c-60c3-4d8e-e663-7b010613915d",
+        "pid": 663292
+      },
+      {
+        "uuid": "GPU-f98a7919-0878-086c-e3da-080c5d4c17da",
+        "pid": 663293
+      },
+      {
+        "uuid": "GPU-738b5b04-56d0-88e2-adbb-8f9e9620a0c6",
+        "pid": 663294
+      }
+    ],
+    "free_mib": {
+      "GPU-314252fd-a4aa-427f-3904-33f7505866b2": 89871,
+      "GPU-20b7af2c-60c3-4d8e-e663-7b010613915d": 89677,
+      "GPU-f98a7919-0878-086c-e3da-080c5d4c17da": 89751,
+      "GPU-738b5b04-56d0-88e2-adbb-8f9e9620a0c6": 89879
+    },
+    "user_requested_shared_launch": true,
+    "existing_training_untouched": true
+  },
+  "launcher": "/cis/home/xliu253/Documents/PanoLagerNVS/launch_scheduled_unirope_io105_now_20261104/launch_now.py",
+  "launcher_sha256": "b65247ac70e0162c1bfb88cd9addf077a81ac2e9debc1aadf912623e5ac59169"
+}

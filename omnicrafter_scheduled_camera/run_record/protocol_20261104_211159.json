@@ -1,0 +1,74 @@
+{
+  "camera": {
+    "version": 1,
+    "camera_injection": "concat_scheduled_unirope",
+    "reference_count": 2,
+    "query_count": 3,
+    "input_order": "ref1,ref2,q1,q2,q3",
+    "global_coordinate_frame": "third_query_camera_full_rotation_and_translation",
+    "sort_refs_by_distance": false,
+    "dit_input_channels": 420,
+    "dit_image_channels": 36,
+    "dit_camera_channels": 384,
+    "concat_pose_normalization": "third_query_frame_mean_camera_distance_unchanged",
+    "concat_perspective_ray_model": "inverse_opencv_k1_k2_p1_p2_unchanged",
+    "new_attention_perspective_ray_model": "RayCrafter_pinhole_K_only",
+    "temporal_rope": "zero_phase",
+    "zero_gate": "hard_bypass_original_concat_attention_no_new_module_RNG",
+    "inherited_training": "standard_LoRA32_plus_patch_embedding_continues_training",
+    "unirope_pose_normalization": "third_query_frame_unit_reference_baseline",
+    "unirope_internal_attention": "per_camera_relative_geometry_not_sample_recentering",
+    "unirope_footprint": true,
+    "unirope_adaptive_freqs": true,
+    "unirope_apply_vo": true,
+    "depth_head_lr": 0.0004,
+    "depth_head_weight_decay": 0.5,
+    "wan_spatial_rope": "baseline_branch_only",
+    "injection": "(1-lambda)*original_spatial_rope_attention+lambda*UniRoPE_attention_before_shared_output_projection"
+  },
+  "manifest": "/dev/shm/xliu253_scheduled_unirope_20261104/train.jsonl",
+  "sets": 200000,
+  "batch_per_gpu": 1,
+  "global_batch": 4,
+  "nvs_probability": 0.5,
+  "task_sampling": "per_sample_all_three_black",
+  "cleanup_pixel_dropout": [
+    0,
+    100
+  ],
+  "main_lr": 1e-05,
+  "cleanup_all_black_guard": "redraw_dropout_keep_at_least_one_nonempty_query",
+  "empty_cleanup_source_policy": "resample_entire_train_set_same_scene_first_else_same_dataset_projection_resolution",
+  "empty_cleanup_source_search_limits": {
+    "same_scene": 64,
+    "same_dataset": 256
+  },
+  "manifest_modified": false,
+  "initialization": "/cis/net/io81/data/xliu253/omniraycrafter/mixed_projection_2ref3_dl3dv100k_hm3d60k_jhu40k_b1_300k_io104/step-50000.safetensors",
+  "initialization_sha256": "d62ecdfbb8ce0dbbfacb2906c831b76a3693f3a1479f09d3adcab25797cc595f",
+  "base_step": 50000,
+  "ramp_steps": 10000,
+  "injection_schedule": "linear 0 to 1 over first ramp_steps additional updates; positive gate on first update",
+  "inherited_parameters": "standard LoRA and patch embedding trainable throughout; no extra backbone unfreezing",
+  "depth_lr": 0.0004,
+  "depth_weight_decay": 0.5,
+  "lr_schedule": "constant",
+  "zero_stage": 2,
+  "optimizer_device": "cuda",
+  "cpu_offload": false,
+  "resolutions_hw": {
+    "panorama": [
+      256,
+      512
+    ],
+    "perspective": [
+      288,
+      512
+    ]
+  },
+  "initial_step": 50000,
+  "max_steps": 350000,
+  "save_every": 2000,
+  "restore_checkpoint": null,
+  "manifest_sha256": "f8e68572491cc54ab88db2982b9fa9ed2e7ab0ff286bda0d45740215d1d6d04a"
+}
