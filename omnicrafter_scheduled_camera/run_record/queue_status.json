@@ -1,0 +1,10 @@
+{
+  "time": "2026-11-04T21:07:14.938083-05:00",
+  "stage": "launching",
+  "pid": 3281647,
+  "host": "io104",
+  "variant": "scope_ff",
+  "gpu_list": "0,1,2,3",
+  "poll_seconds": 60,
+  "wait_timeout": null
+}
