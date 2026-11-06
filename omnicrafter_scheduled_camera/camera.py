@@ -1,7 +1,7 @@
 """Query 3 is the global origin. Manifest/model reference order NEVER changes.
 
 Concat retains its existing mean-distance scale for warm-start equivalence.
-SCoPE uses scene near depth. RayRoPE uses unit reference baseline; its
+SCoPE-FF uses scene near depth. RayRoPE uses unit reference baseline; its
 internal per-camera relative-attention passes do not change this global gauge.
 Pinned RayCrafter source files remain unmodified.
 """
@@ -60,15 +60,15 @@ def prepare_camera_context(cameras, device):
     result = {'raymap': raymap.to(device=device, dtype=torch.float32), 'num_frames': 5,
               'image_hw': (h,w), 'latent_hw': cameras['latent_hw']}
     with torch.autocast(device_type=device.type, enabled=False):
-        if VARIANT == 'scope':
+        if VARIANT == 'scope_ff':
             scaled = c2w.clone()
             scaled[:,:,:3,3] /= cameras['near_depth']
             # Upstream anchors camera 0. Temporarily put q3 there for geometry
             # construction ONLY, then restore the original token order.
             indices, inverse = [4,0,1,2,3], [1,2,3,4,0]
             rays = plucker_tokens(scaled[:,indices], K[:,indices], (h,w),
-                cameras['latent_hw'], camera_model=cameras['camera_model'], patch_size=False)
-            result['plucker'] = rays.reshape(c2w.shape[0],5,-1,6)[:,inverse].reshape(c2w.shape[0],-1,6)
+                cameras['latent_hw'], camera_model=cameras['camera_model'], patch_size=True)
+            result['plucker'] = rays.reshape(c2w.shape[0],5,-1,7)[:,inverse].reshape(c2w.shape[0],-1,7)
             result['normalized_c2w'] = scaled
         else:
             geom = prepare_geometry(c2w,K,(h,w),cameras['latent_hw'],camera_model=cameras['camera_model'])

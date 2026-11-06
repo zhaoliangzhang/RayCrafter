@@ -18,7 +18,7 @@ def attention_forward(self, x, payload):
     if strength == 0.:
         return SelfAttention.forward(self, x, freqs)
     q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(x)), self.v(x)
-    if VARIANT == 'scope':
+    if VARIANT == 'scope_ff':
         q_base, k_base = rope_apply(q,freqs,self.num_heads), rope_apply(k,freqs,self.num_heads)
         dq, dk, unused = self.scope_pe(torch.zeros_like(q),torch.zeros_like(k),cameras['plucker'],5)
         if unused is not None:
@@ -46,8 +46,8 @@ def install_camera_attention(dit):
         if a.head_dim != 128 or hasattr(a,'scope_pe') or hasattr(a,'rayrope_depth'):
             raise ValueError('Expected unmodified WAN attention')
         parameter = next(a.parameters())
-        if VARIANT == 'scope':
-            a.scope_pe = SightlineCoordinatePE(dit.dim,mlp_hidden=64,dir_freqs=0,patch_size=False).to(parameter)
+        if VARIANT == 'scope_ff':
+            a.scope_pe = SightlineCoordinatePE(dit.dim,mlp_hidden=64,dir_freqs=8,patch_size=True).to(parameter)
         else:
             a.rayrope_depth = DepthHead(dit.dim,init_depth=0.,init_sigma=3.).to(parameter)
         a.forward = types.MethodType(attention_forward,a)
@@ -100,8 +100,8 @@ def optimizer_groups(dit, main_lr=1e-5, weight_decay=.01):
     if not inherited or not new:
         raise ValueError('Expected inherited LoRA/patch and new camera parameters')
     return [dict(params=inherited,lr=main_lr,weight_decay=weight_decay,group_name='inherited_concat_lora_patch'),
-            dict(params=new,lr=main_lr if VARIANT=='scope' else 4e-4,
-                 weight_decay=weight_decay if VARIANT=='scope' else .5,group_name=VARIANT)]
+            dict(params=new,lr=main_lr if VARIANT=='scope_ff' else 4e-4,
+                 weight_decay=weight_decay if VARIANT=='scope_ff' else .5,group_name=VARIANT)]
 
 def depth_statistics(dit):
     if VARIANT != 'rayrope':

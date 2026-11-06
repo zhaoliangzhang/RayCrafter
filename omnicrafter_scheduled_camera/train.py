@@ -1,4 +1,4 @@
-"""Two separate scheduled concat continuations, four GPUs each."""
+"""Concat + camera continuation on four GPUs, with a linear injection ramp or (ramp 0) none."""
 import argparse
 from datetime import datetime
 import fcntl
@@ -88,8 +88,8 @@ def main():
     torch.set_num_threads(4)
     accelerator = Accelerator(mixed_precision='bf16', gradient_accumulation_steps=1,
                               deepspeed_plugin=DeepSpeedPlugin(hf_ds_config=zero2_config()))
-    if accelerator.num_processes != 4 or args.ramp_steps <= 0:
-        raise ValueError('Require four GPUs and a positive ramp length')
+    if accelerator.num_processes != 4 or args.ramp_steps < 0:
+        raise ValueError('Require four GPUs and a nonnegative ramp length')
     set_seed(args.seed, device_specific=True)
     args.output.mkdir(parents=True, exist_ok=True)
     resume_dir = find_resume(args.output)
@@ -153,7 +153,8 @@ def main():
                 'initialization': str(args.initialization_checkpoint),
                 'initialization_sha256': sha256(args.initialization_checkpoint) if accelerator.is_main_process else None,
                 'base_step': BASE_STEP, 'ramp_steps': args.ramp_steps,
-                'injection_schedule': 'linear 0 to 1 over first ramp_steps additional updates; positive gate on first update',
+                'injection_schedule': ('linear 0 to 1 over first ramp_steps additional updates; positive gate on first update'
+                                       if args.ramp_steps else 'none: lambda 1 from the first update'),
                 'inherited_parameters': 'standard LoRA and patch embedding trainable throughout; no extra backbone unfreezing',
                 'depth_lr': 4e-4 if VARIANT=='rayrope' else None,
                 'depth_weight_decay': .5 if VARIANT=='rayrope' else None, 'lr_schedule': 'constant',

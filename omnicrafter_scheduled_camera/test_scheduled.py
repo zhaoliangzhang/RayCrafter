@@ -31,8 +31,10 @@ class ScheduledTests(unittest.TestCase):
         verify_vendor()
 
     def test_schedule(self):
-        self.assertEqual([injection_weight(s) for s in [50000,50001,55000,60000,350000]],
+        self.assertEqual([injection_weight(s,10000) for s in [50000,50001,55000,60000,350000]],
                          [0.,.0001,.5,1.,1.])
+        # This run: no schedule, lambda 1 from the first update.
+        self.assertEqual([injection_weight(s) for s in [50000,50001,55000,100000]],[0.,1.,1.,1.])
 
     def test_camera_center_order_scale(self):
         for projection in ('panorama','perspective'):
@@ -42,24 +44,40 @@ class ScheduledTests(unittest.TestCase):
             self.assertTrue(torch.equal(cameras['raymap'],camera_features(source,'concat')[0]['raymap']))
             context=prepare_camera_context(cameras,'cpu')
             torch.testing.assert_close(context['normalized_c2w'][0,-1],torch.eye(4),atol=2e-6,rtol=0)
-            if VARIANT=='scope':
+            if VARIANT=='scope_ff':
                 torch.testing.assert_close(context['normalized_c2w'][0,:,:3,3],cameras['c2w'][:,:3,3]/2)
-                rays=context['plucker'].reshape(1,5,-1,6)
+                rays=context['plucker'].reshape(1,5,-1,7)
                 self.assertLess(rays[0,-1,:,3:6].abs().max().item(),1e-6)
             else:
                 centers=context['normalized_c2w'][0,:,:3,3]
                 self.assertAlmostEqual((centers[0]-centers[1]).norm().item(),1.,places=5)
 
-    def test_endpoints_and_gradients(self):
+    def models(self):
         torch.manual_seed(42)
         base=WanModel(dim=128,in_dim=420,ffn_dim=192,out_dim=16,text_dim=16,freq_dim=16,
             eps=1e-6,patch_size=(1,2,2),num_heads=1,num_layers=2,has_image_input=False,require_clip_embedding=False)
         base.head.forward=types.MethodType(batched_head_forward,base.head)
         adapted=copy.deepcopy(base)
         install_camera_attention(adapted)
+        return base,adapted
+
+    def test_zero_init_lambda_one_is_concat(self):
+        # No schedule: the first update already runs at lambda 1, so the freshly
+        # initialized SCoPE-FF (zero output layer) must leave the concat model's output unchanged.
+        base,adapted=self.models()
+        adapted.injection_strength=1.
+        for projection in ('panorama','perspective'):
+            cameras=prepare_camera_context(ordered_cameras(row(projection))[1],'cpu')
+            inputs=dict(latents=torch.randn(1,16,5,4,8),y=torch.randn(1,20,5,4,8),
+                        context=torch.randn(1,6,16),timestep=torch.ones(1))
+            expected=model_fn_wan_video(base,**inputs,raymap=cameras['raymap'])
+            self.assertTrue(torch.equal(expected,model_fn(adapted,**inputs,camera_context=cameras)))
+
+    def test_endpoints_and_gradients(self):
+        base,adapted=self.models()
         # Nonzero new tensors prove gate-zero parity is a real bypass, not
         # merely a consequence of zero initialization.
-        if VARIANT=='scope':
+        if VARIANT=='scope_ff':
             with torch.no_grad():
                 for b in adapted.blocks:
                     b.self_attn.scope_pe.eq[2].weight.normal_(0,.01)
@@ -86,7 +104,7 @@ class ScheduledTests(unittest.TestCase):
         if VARIANT=='rayrope':
             self.assertEqual(optimizer_groups(adapted)[1]['lr'],4e-4)
         else:
-            self.assertEqual(adapted.blocks[0].self_attn.scope_pe.eq[0].in_features,7)
+            self.assertEqual(adapted.blocks[0].self_attn.scope_pe.eq[0].in_features,56)
 
     def test_rayrope_gauge_is_q3(self):
         if VARIANT!='rayrope':

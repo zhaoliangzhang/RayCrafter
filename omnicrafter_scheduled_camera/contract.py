@@ -1,10 +1,10 @@
-"""Persist the architecture, coordinate gauge and gradual injection contract."""
+"""Persist the architecture, coordinate gauge and injection contract."""
 import hashlib
 import json
-from config import ROOT, VARIANT
+from config import ROOT, RAMP_STEPS, VARIANT
 
 CAMERA_CONTRACT = {
- 'version': 1, 'camera_injection': 'concat_scheduled_' + VARIANT,
+ 'version': 1, 'camera_injection': 'concat_' + ('scheduled_' if RAMP_STEPS else '') + VARIANT,
  'reference_count': 2, 'query_count': 3, 'input_order': 'ref1,ref2,q1,q2,q3',
  'global_coordinate_frame': 'third_query_camera_full_rotation_and_translation',
  'sort_refs_by_distance': False,
@@ -15,10 +15,11 @@ CAMERA_CONTRACT = {
  'temporal_rope': 'zero_phase',
  'zero_gate': 'hard_bypass_original_concat_attention_no_new_module_RNG',
  'inherited_training': 'standard_LoRA32_plus_patch_embedding_continues_training',
+ 'injection_schedule': 'linear_ramp' if RAMP_STEPS else 'none_lambda_1_from_first_update',
 }
-if VARIANT == 'scope':
+if VARIANT == 'scope_ff':
     CAMERA_CONTRACT.update(scope_pose_normalization='third_query_frame_translation_divided_by_scene_near_depth',
-        scope_dir_freqs=0, scope_patch_size=False, scope_mlp_hidden=64,
+        scope_dir_freqs=8, scope_patch_size=True, scope_mlp_hidden=64,
         scope_output_initialization='zero_final_projection_random_hidden',
         wan_spatial_rope='retained_at_all_gate_values',
         injection='Q_rope+lambda*scope_Q; K_rope+lambda*scope_K; V_unchanged')

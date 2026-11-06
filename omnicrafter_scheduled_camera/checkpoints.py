@@ -13,7 +13,7 @@ import shutil
 import torch
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
-from config import BASE_STEP, VARIANT, injection_weight
+from config import BASE_STEP, VARIANT, injection_weight, schedule_type
 from contract import contract_json, check_contract
 
 def sha256(path):
@@ -71,7 +71,7 @@ def restore_adapter(dit,path,ramp_steps):
     check_contract(metadata)
     step = int(metadata['step'])
     schedule = json.loads(metadata['injection_schedule'])
-    if schedule != {'base_step':BASE_STEP,'ramp_steps':ramp_steps,'type':'linear',
+    if schedule != {'base_step':BASE_STEP,'ramp_steps':ramp_steps,'type':schedule_type(ramp_steps),
                     'completed_updates':step-BASE_STEP,'weight':injection_weight(step,ramp_steps)}:
         raise ValueError('Resume schedule/step mismatch')
     state = load_file(str(path),device='cpu')
@@ -92,7 +92,7 @@ def save_adapter(accelerator,model,destination,step,protocol):
         expected = {n for n,p in module.pipe.dit.named_parameters() if p.requires_grad}
         if set(state) != expected:
             raise ValueError('Incomplete trainable export')
-        schedule = dict(base_step=BASE_STEP,ramp_steps=protocol['ramp_steps'],type='linear',
+        schedule = dict(base_step=BASE_STEP,ramp_steps=protocol['ramp_steps'],type=schedule_type(protocol['ramp_steps']),
                         completed_updates=step-BASE_STEP,weight=injection_weight(step,protocol['ramp_steps']))
         save_atomic(state,destination,{'step':str(step),'camera_contract':contract_json(),
             'injection_schedule':json.dumps(schedule,sort_keys=True),

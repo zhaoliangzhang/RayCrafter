@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Concat + scheduled SCoPE or RayRoPE continuation, 50k -> 100k, on 4xH100.
-# Submit from the root of the worktree that holds this branch:
-#   CAMERA_VARIANT=scope   sbatch -J oc-sched-scope   omnicrafter_scheduled_camera/train_4gpu.sbatch
-#   CAMERA_VARIANT=rayrope sbatch -J oc-sched-rayrope omnicrafter_scheduled_camera/train_4gpu.sbatch
+# Concat + SCoPE-FF continuation without an injection schedule (lambda 1 from the
+# first update), 50k -> 100k, on 4xH100. Submit from the root of this branch's worktree:
+#   CAMERA_VARIANT=scope_ff sbatch -J oc-concat-scopeff omnicrafter_scheduled_camera/train_4gpu.sbatch
 # The run saves its full state (resume/) every 2000 steps and 30 min before the walltime.
 # Resubmitting the same command continues from it; once complete, a resubmit only reports that.
 #SBATCH --partition=h100
@@ -18,7 +17,7 @@
 #SBATCH --error=/weka/home/jhu/dli90/RayCrafter/bash_outputs/%x-%j.err
 set -euo pipefail
 
-: "${CAMERA_VARIANT:?set CAMERA_VARIANT to scope or rayrope}"
+: "${CAMERA_VARIANT:?set CAMERA_VARIANT=scope_ff}"
 TIME_LIMIT_HOURS=${TIME_LIMIT_HOURS:-31.5}
 export JOB_START_EPOCH=$(date +%s)
 cd "${SLURM_SUBMIT_DIR:?}/omnicrafter_scheduled_camera"
@@ -31,7 +30,7 @@ export CAMERA_VARIANT PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4 OPENBLAS_NUM_THREADS=4
 export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 WANDB_MODE=disabled
 export TOKENIZERS_PARALLELISM=false NCCL_DEBUG=WARN
-CACHE="${TMPDIR:-/tmp}/${USER}/oc_scheduled_${CAMERA_VARIANT}"
+CACHE="${TMPDIR:-/tmp}/${USER}/oc_concat_${CAMERA_VARIANT}"
 export TORCHINDUCTOR_CACHE_DIR="$CACHE/inductor" TRITON_CACHE_DIR="$CACHE/triton" TORCH_EXTENSIONS_DIR="$CACHE/torch_extensions"
 unset TORCH_COMPILE_DISABLE
 
