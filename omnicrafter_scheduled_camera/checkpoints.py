@@ -1,8 +1,15 @@
-"""Strict concat warm-start; isolated scheduled adapters with resume metadata."""
+"""Strict concat warm-start; isolated scheduled adapters with resume metadata.
+
+The full training state (``resume/``) lets a run continue across Slurm jobs as
+if it had not stopped: DeepSpeed weights and AdamW, scheduler, every RNG, and
+each rank's position in the shuffled data.
+"""
+from datetime import datetime
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import torch
 from safetensors import safe_open
 from safetensors.torch import load_file, save_file
@@ -46,7 +53,7 @@ def save_atomic(state,destination,metadata):
 def warm_start(dit,path):
     state = load_file(str(path),device='cpu')
     params = dict(dit.named_parameters())
-    inherited = {n for n,p in params.items() if p.requires_grad and '.scope_pe.' not in n and '.unirope_depth.' not in n}
+    inherited = {n for n,p in params.items() if p.requires_grad and '.scope_pe.' not in n and '.rayrope_depth.' not in n}
     if len(inherited) != 802 or set(state) != inherited:
         raise ValueError(f'Warm-start tensor mismatch: missing={inherited-set(state)}, extra={set(state)-inherited}')
     if any(state[n].shape != params[n].shape for n in inherited):
@@ -92,3 +99,72 @@ def save_adapter(accelerator,model,destination,step,protocol):
             'training_protocol':json.dumps(protocol,sort_keys=True),
             'resume_semantics':'trainable weights and gate/global-step restored; optimizer moments and RNG reset'})
     accelerator.wait_for_everyone()
+
+def full_state_checksum(model,module,accelerator):
+    """Sums of squares of the trainable weights, the fp32 master partitions and
+    both AdamW moments over all ranks: equal before a save and after its load."""
+    weights = torch.zeros((),dtype=torch.float64,device=accelerator.device)
+    for p in module.pipe.dit.parameters():
+        if p.requires_grad:
+            weights += p.detach().double().square().sum()
+    inner = model.optimizer.optimizer
+    local = torch.zeros(3,dtype=torch.float64,device=accelerator.device)
+    for group in inner.param_groups:
+        for p in group['params']:
+            local[0] += p.detach().double().square().sum()
+            state = inner.state.get(p,{})
+            for i,name in ((1,'exp_avg'),(2,'exp_avg_sq')):
+                if name in state:
+                    local[i] += state[name].detach().double().square().sum()
+    local = accelerator.reduce(local,reduction='sum')
+    return {'trainable_weights':weights.item(),'fp32_master':local[0].item(),
+            'exp_avg':local[1].item(),'exp_avg_sq':local[2].item()}
+
+def save_full_state(accelerator,model,module,output,step,data_state,meta):
+    """Write ``resume.partial/`` on all ranks, then swap it in for ``resume/`` by rename.
+    ``data_state`` is this rank's loader position and Python RNG (see ``train.py``)."""
+    partial,current,old = output/'resume.partial',output/'resume',output/'resume.old'
+    if accelerator.is_main_process and partial.exists():
+        shutil.rmtree(partial)
+    accelerator.wait_for_everyone()
+    accelerator.save_state(str(partial),exclude_frozen_parameters=True)
+    partial.mkdir(parents=True,exist_ok=True)
+    torch.save(data_state,partial/f'data_state_rank{accelerator.process_index}.pt')
+    checksum = full_state_checksum(model,module,accelerator)
+    accelerator.wait_for_everyone()
+    if accelerator.is_main_process:
+        # meta.json is written last: its presence marks a complete state.
+        (partial/'meta.json').write_text(json.dumps(dict(meta,time=datetime.now().astimezone().isoformat(),
+            step=step,world_size=accelerator.num_processes,camera_contract=contract_json(),checksum=checksum),indent=2)+'\n')
+        if old.exists():
+            shutil.rmtree(old)
+        if current.exists():
+            current.rename(old)
+        partial.rename(current)
+        if old.exists():
+            shutil.rmtree(old)
+        print(f'{datetime.now().astimezone().isoformat()} full state (weights + AdamW + scheduler + RNG + data position) '
+              f'-> {current} (step {step})',flush=True)
+    accelerator.wait_for_everyone()
+
+def find_resume(output):
+    """``resume/``, or ``resume.old/`` if a swap was cut between its two renames."""
+    for name in ('resume','resume.old'):
+        if (output/name/'meta.json').is_file():
+            return output/name
+    return None
+
+def load_full_state(accelerator,model,module,directory):
+    """Restore a ``save_full_state`` directory; returns its meta and this rank's data state."""
+    meta = json.loads((directory/'meta.json').read_text())
+    if meta['world_size'] != accelerator.num_processes:
+        raise ValueError(f"Resume needs {meta['world_size']} GPUs")
+    if meta['camera_contract'] != contract_json():
+        raise ValueError('Full state does not match this scheduled camera architecture')
+    accelerator.load_state(str(directory),load_module_strict=False)
+    checksum = full_state_checksum(model,module,accelerator)
+    for key,value in meta['checksum'].items():
+        if abs(checksum[key]-value) > 1e-9*abs(value):
+            raise RuntimeError(f'Full-state checksum {key}: loaded {checksum[key]} != saved {value}')
+    data_state = torch.load(directory/f'data_state_rank{accelerator.process_index}.pt',weights_only=False)
+    return meta,data_state

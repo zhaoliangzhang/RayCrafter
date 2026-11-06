@@ -2,7 +2,7 @@
 import json
 import torch
 from accelerate import Accelerator,DeepSpeedPlugin
-from config import LOCAL,OUT,VARIANT
+from config import SOURCE,OUT,VARIANT
 from dataset import MixedProjectionDataset
 from camera import ordered_cameras,prepare_camera_context
 from train import zero2_config
@@ -32,14 +32,14 @@ def main():
     torch.set_num_threads(4)
     acc=Accelerator(mixed_precision='bf16',deepspeed_plugin=DeepSpeedPlugin(hf_ds_config=zero2_config()))
     if acc.num_processes!=4:raise ValueError('Require four ranks')
-    data=MixedProjectionDataset(LOCAL/'train.jsonl',LOCAL/'train.offsets.npy')
+    data=MixedProjectionDataset(SOURCE/'train.jsonl',SOURCE/'train.offsets.npy')
     cases={}
     for i in range(len(data)):
         row=data.record(i);cases.setdefault(row['projection'],ordered_cameras(row)[1])
         if len(cases)==2:break
     module=Tiny();optimizer=torch.optim.AdamW(optimizer_groups(module.dit))
     model,optimizer=acc.prepare(module,optimizer)
-    initial={n:p.detach().clone() for n,p in module.dit.named_parameters() if '.scope_pe.' in n or '.unirope_depth.' in n}
+    initial={n:p.detach().clone() for n,p in module.dit.named_parameters() if '.scope_pe.' in n or '.rayrope_depth.' in n}
     results=[]
     for projection,strength in [('panorama',.0001),('perspective',.2),('panorama',1.)]:
         optimizer.zero_grad()
