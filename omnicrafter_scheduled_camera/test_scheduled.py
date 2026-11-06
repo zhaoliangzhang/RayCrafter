@@ -42,9 +42,9 @@ class ScheduledTests(unittest.TestCase):
             self.assertTrue(torch.equal(cameras['raymap'],camera_features(source,'concat')[0]['raymap']))
             context=prepare_camera_context(cameras,'cpu')
             torch.testing.assert_close(context['normalized_c2w'][0,-1],torch.eye(4),atol=2e-6,rtol=0)
-            if VARIANT=='scope_ff':
+            if VARIANT=='scope':
                 torch.testing.assert_close(context['normalized_c2w'][0,:,:3,3],cameras['c2w'][:,:3,3]/2)
-                rays=context['plucker'].reshape(1,5,-1,7)
+                rays=context['plucker'].reshape(1,5,-1,6)
                 self.assertLess(rays[0,-1,:,3:6].abs().max().item(),1e-6)
             else:
                 centers=context['normalized_c2w'][0,:,:3,3]
@@ -59,7 +59,7 @@ class ScheduledTests(unittest.TestCase):
         install_camera_attention(adapted)
         # Nonzero new tensors prove gate-zero parity is a real bypass, not
         # merely a consequence of zero initialization.
-        if VARIANT=='scope_ff':
+        if VARIANT=='scope':
             with torch.no_grad():
                 for b in adapted.blocks:
                     b.self_attn.scope_pe.eq[2].weight.normal_(0,.01)
@@ -80,11 +80,30 @@ class ScheduledTests(unittest.TestCase):
                 loss=model_fn(adapted,**inputs,camera_context=cameras,use_gradient_checkpointing=True).square().mean()
                 self.assertTrue(torch.isfinite(loss))
                 loss.backward()
-                new=[p for n,p in adapted.named_parameters() if '.scope_pe.' in n or '.unirope_depth.' in n]
+                new=[p for n,p in adapted.named_parameters() if '.scope_pe.' in n or '.rayrope_depth.' in n]
                 self.assertTrue(any(p.grad is not None and p.grad.abs().sum()>0 for p in new))
                 self.assertTrue(all(p.grad is None or torch.isfinite(p.grad).all() for p in new))
-        if VARIANT=='unirope':
+        if VARIANT=='rayrope':
             self.assertEqual(optimizer_groups(adapted)[1]['lr'],4e-4)
+        else:
+            self.assertEqual(adapted.blocks[0].self_attn.scope_pe.eq[0].in_features,7)
+
+    def test_rayrope_gauge_is_q3(self):
+        if VARIANT!='rayrope':
+            self.skipTest('RayRoPE only')
+        # Moving the world origin from ref1 to q3 must leave every camera-to-camera
+        # transform, and so RayRoPE's per-camera coordinates, unchanged.
+        from vendor.raycrafter_camera.rayrope import prepare_geometry
+        for projection in ('panorama','perspective'):
+            cameras=ordered_cameras(row(projection))[1]
+            moved=prepare_camera_context(cameras,'cpu')['geom']
+            plain=prepare_geometry(cameras['c2w'][None],cameras['fxfycxcy'][None],cameras['image_hw'],
+                                   cameras['latent_hw'],camera_model=cameras['camera_model'])
+            pairs=lambda g,a,b: g[a][:,:,None]@g[b][:,None]
+            self.assertFalse(torch.allclose(moved['c2w'],plain['c2w']))
+            torch.testing.assert_close(pairs(moved,'w2c','c2w'),pairs(plain,'w2c','c2w'),atol=1e-5,rtol=0)
+            torch.testing.assert_close(pairs(moved,'projection','projection_inv'),
+                                       pairs(plain,'projection','projection_inv'),atol=1e-5,rtol=0)
 
 if __name__=='__main__':
     torch.set_num_threads(2)

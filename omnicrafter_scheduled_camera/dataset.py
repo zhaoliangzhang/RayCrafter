@@ -144,6 +144,9 @@ class MixedProjectionDataset(Dataset):
             return image.convert('RGB').resize((w, h), Image.Resampling.BILINEAR)
 
     def __getitem__(self, index):
+        # The loader fetches one set ahead, so a full-state save keeps the
+        # state from before that fetch and a resume draws the same task again.
+        self.random_state_before_item = random.getstate()
         original = row = self.record(index)
         source_renders = self.source_renders(row)
         # Draw the task exactly ONCE, before any replacement search. In

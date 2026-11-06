@@ -9,8 +9,7 @@ from contract import CAMERA_CONTRACT
 from diffsynth.models.wan_video_dit import SelfAttention, rope_apply, sinusoidal_embedding_1d
 from diffsynth.pipelines.wan_video import model_fn_wan_video
 from vendor.raycrafter_camera.scope import SightlineCoordinatePE
-from vendor.raycrafter_camera.rayrope import DepthHead
-from vendor.raycrafter_camera.unirope import unirope_attention
+from vendor.raycrafter_camera.rayrope import DepthHead, rayrope_attention
 
 def attention_forward(self, x, payload):
     if torch.is_tensor(payload):
@@ -19,7 +18,7 @@ def attention_forward(self, x, payload):
     if strength == 0.:
         return SelfAttention.forward(self, x, freqs)
     q, k, v = self.norm_q(self.q(x)), self.norm_k(self.k(x)), self.v(x)
-    if VARIANT == 'scope_ff':
+    if VARIANT == 'scope':
         q_base, k_base = rope_apply(q,freqs,self.num_heads), rope_apply(k,freqs,self.num_heads)
         dq, dk, unused = self.scope_pe(torch.zeros_like(q),torch.zeros_like(k),cameras['plucker'],5)
         if unused is not None:
@@ -27,7 +26,7 @@ def attention_forward(self, x, payload):
         return self.o(self.attn(q_base + strength*dq, k_base + strength*dk, v))
     split = lambda t: rearrange(t,'b s (h d) -> b h s d',h=self.num_heads)
     qs,ks,vs = map(split,(q,k,v))
-    new = unirope_attention(qs,ks,vs,qs,ks,0,self.unirope_depth(x),cameras['geom'],apply_vo=True)
+    new = rayrope_attention(qs,ks,vs,qs,ks,0,self.rayrope_depth(x),cameras['geom'],apply_vo=True)
     if strength == 1.:
         return self.o(new)
     baseline = self.attn(rope_apply(q,freqs,self.num_heads),rope_apply(k,freqs,self.num_heads),v)
@@ -44,13 +43,13 @@ def install_camera_attention(dit):
         raise ValueError('Expected the original 420-channel concat architecture')
     for block in dit.blocks:
         a = block.self_attn
-        if a.head_dim != 128 or hasattr(a,'scope_pe') or hasattr(a,'unirope_depth'):
+        if a.head_dim != 128 or hasattr(a,'scope_pe') or hasattr(a,'rayrope_depth'):
             raise ValueError('Expected unmodified WAN attention')
         parameter = next(a.parameters())
-        if VARIANT == 'scope_ff':
-            a.scope_pe = SightlineCoordinatePE(dit.dim,mlp_hidden=64,dir_freqs=8,patch_size=True).to(parameter)
+        if VARIANT == 'scope':
+            a.scope_pe = SightlineCoordinatePE(dit.dim,mlp_hidden=64,dir_freqs=0,patch_size=False).to(parameter)
         else:
-            a.unirope_depth = DepthHead(dit.dim,init_depth=0.,init_sigma=3.).to(parameter)
+            a.rayrope_depth = DepthHead(dit.dim,init_depth=0.,init_sigma=3.).to(parameter)
         a.forward = types.MethodType(attention_forward,a)
     dit.head.forward = types.MethodType(batched_head_forward,dit.head)
     dit.camera_contract = dict(CAMERA_CONTRACT)
@@ -97,15 +96,15 @@ def optimizer_groups(dit, main_lr=1e-5, weight_decay=.01):
     inherited, new = [], []
     for name,p in dit.named_parameters():
         if p.requires_grad:
-            (new if '.scope_pe.' in name or '.unirope_depth.' in name else inherited).append(p)
+            (new if '.scope_pe.' in name or '.rayrope_depth.' in name else inherited).append(p)
     if not inherited or not new:
         raise ValueError('Expected inherited LoRA/patch and new camera parameters')
     return [dict(params=inherited,lr=main_lr,weight_decay=weight_decay,group_name='inherited_concat_lora_patch'),
-            dict(params=new,lr=main_lr if VARIANT=='scope_ff' else 4e-4,
-                 weight_decay=weight_decay if VARIANT=='scope_ff' else .5,group_name=VARIANT)]
+            dict(params=new,lr=main_lr if VARIANT=='scope' else 4e-4,
+                 weight_decay=weight_decay if VARIANT=='scope' else .5,group_name=VARIANT)]
 
 def depth_statistics(dit):
-    if VARIANT != 'unirope':
+    if VARIANT != 'rayrope':
         return {}
-    bias = torch.stack([b.self_attn.unirope_depth.bias.float() for b in dit.blocks]).mean(0)
+    bias = torch.stack([b.self_attn.rayrope_depth.bias.float() for b in dit.blocks]).mean(0)
     return {'depth/log_depth_bias':bias[0].item(),'depth/sigma_bias':bias[1].item()}

@@ -1,7 +1,7 @@
 """Query 3 is the global origin. Manifest/model reference order NEVER changes.
 
 Concat retains its existing mean-distance scale for warm-start equivalence.
-SCoPE-FF uses scene near depth. UniRoPE uses unit reference baseline; its
+SCoPE uses scene near depth. RayRoPE uses unit reference baseline; its
 internal per-camera relative-attention passes do not change this global gauge.
 Pinned RayCrafter source files remain unmodified.
 """
@@ -10,7 +10,7 @@ import torch
 from config import VARIANT
 from concat_camera import camera_features
 from vendor.raycrafter_camera.scope import plucker_tokens
-from vendor.raycrafter_camera.unirope import prepare_unirope
+from vendor.raycrafter_camera.rayrope import prepare_geometry
 
 def ordered_cameras(record):
     h, w = int(record['height']), int(record['width'])
@@ -60,19 +60,18 @@ def prepare_camera_context(cameras, device):
     result = {'raymap': raymap.to(device=device, dtype=torch.float32), 'num_frames': 5,
               'image_hw': (h,w), 'latent_hw': cameras['latent_hw']}
     with torch.autocast(device_type=device.type, enabled=False):
-        if VARIANT == 'scope_ff':
+        if VARIANT == 'scope':
             scaled = c2w.clone()
             scaled[:,:,:3,3] /= cameras['near_depth']
             # Upstream anchors camera 0. Temporarily put q3 there for geometry
             # construction ONLY, then restore the original token order.
             indices, inverse = [4,0,1,2,3], [1,2,3,4,0]
             rays = plucker_tokens(scaled[:,indices], K[:,indices], (h,w),
-                cameras['latent_hw'], camera_model=cameras['camera_model'], patch_size=True)
-            result['plucker'] = rays.reshape(c2w.shape[0],5,-1,7)[:,inverse].reshape(c2w.shape[0],-1,7)
+                cameras['latent_hw'], camera_model=cameras['camera_model'], patch_size=False)
+            result['plucker'] = rays.reshape(c2w.shape[0],5,-1,6)[:,inverse].reshape(c2w.shape[0],-1,6)
             result['normalized_c2w'] = scaled
         else:
-            geom = prepare_unirope(c2w,K,(h,w),cameras['latent_hw'],
-                footprint=True,camera_model=cameras['camera_model'],adaptive_freqs=True)
+            geom = prepare_geometry(c2w,K,(h,w),cameras['latent_hw'],camera_model=cameras['camera_model'])
             # Keep the vendor's reference-baseline SCALE, but change its
             # world gauge from ref1 to q3 consistently for every matrix.
             old_anchor = geom['c2w'][:,-1:].clone()

@@ -16,19 +16,19 @@ CAMERA_CONTRACT = {
  'zero_gate': 'hard_bypass_original_concat_attention_no_new_module_RNG',
  'inherited_training': 'standard_LoRA32_plus_patch_embedding_continues_training',
 }
-if VARIANT == 'scope_ff':
+if VARIANT == 'scope':
     CAMERA_CONTRACT.update(scope_pose_normalization='third_query_frame_translation_divided_by_scene_near_depth',
-        scope_dir_freqs=8, scope_patch_size=True, scope_mlp_hidden=64,
+        scope_dir_freqs=0, scope_patch_size=False, scope_mlp_hidden=64,
         scope_output_initialization='zero_final_projection_random_hidden',
         wan_spatial_rope='retained_at_all_gate_values',
         injection='Q_rope+lambda*scope_Q; K_rope+lambda*scope_K; V_unchanged')
 else:
-    CAMERA_CONTRACT.update(unirope_pose_normalization='third_query_frame_unit_reference_baseline',
-        unirope_internal_attention='per_camera_relative_geometry_not_sample_recentering',
-        unirope_footprint=True, unirope_adaptive_freqs=True, unirope_apply_vo=True,
+    CAMERA_CONTRACT.update(rayrope_pose_normalization='third_query_frame_unit_reference_baseline',
+        rayrope_internal_attention='per_camera_relative_geometry_not_sample_recentering',
+        rayrope_apply_vo=True, rayrope_equirect_depth='signed_z_over_w',
         depth_head_lr=4e-4, depth_head_weight_decay=.5,
         wan_spatial_rope='baseline_branch_only',
-        injection='(1-lambda)*original_spatial_rope_attention+lambda*UniRoPE_attention_before_shared_output_projection')
+        injection='(1-lambda)*original_spatial_rope_attention+lambda*RayRoPE_attention_before_shared_output_projection')
 
 def contract_json():
     return json.dumps(CAMERA_CONTRACT, sort_keys=True, separators=(',', ':'))
