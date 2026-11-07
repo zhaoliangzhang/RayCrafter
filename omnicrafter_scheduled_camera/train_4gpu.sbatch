@@ -13,13 +13,13 @@
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=384G
 #SBATCH --gres=gpu:h100:4
-#SBATCH --time=32:00:00
+#SBATCH --time=36:00:00
 #SBATCH --output=/weka/home/jhu/dli90/RayCrafter/bash_outputs/%x-%j.out
 #SBATCH --error=/weka/home/jhu/dli90/RayCrafter/bash_outputs/%x-%j.err
 set -euo pipefail
 
 : "${CAMERA_VARIANT:?set CAMERA_VARIANT to scope or rayrope}"
-TIME_LIMIT_HOURS=${TIME_LIMIT_HOURS:-31.5}
+TIME_LIMIT_HOURS=${TIME_LIMIT_HOURS:-35.5}
 export JOB_START_EPOCH=$(date +%s)
 cd "${SLURM_SUBMIT_DIR:?}/omnicrafter_scheduled_camera"
 
@@ -33,7 +33,10 @@ export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 WANDB_MODE=disabled
 export TOKENIZERS_PARALLELISM=false NCCL_DEBUG=WARN
 CACHE="${TMPDIR:-/tmp}/${USER}/oc_scheduled_${CAMERA_VARIANT}"
 export TORCHINDUCTOR_CACHE_DIR="$CACHE/inductor" TRITON_CACHE_DIR="$CACHE/triton" TORCH_EXTENSIONS_DIR="$CACHE/torch_extensions"
-unset TORCH_COMPILE_DISABLE
+# RayRoPE's @torch.compile functions run eagerly: Triton builds a C stub against Python.h, which this
+# env's system Python doesn't have on Skipjack (job 1597642 failed in gpu_smoke on it). Same functions;
+# eager is slower (~2.2 s/step, as omnicrafter_unirope), hence the 36 h walltime.
+export TORCH_COMPILE_DISABLE=1
 
 eval "$(python -B -c 'import config as c; print(f"OUT={c.OUT} INIT={c.INITIALIZATION} SOURCE={c.SOURCE} WAN={c.WAN} PATH_MAP={c.PATH_MAP} FINAL_STEP={c.FINAL_STEP} RAMP_STEPS={c.RAMP_STEPS}")')"
 for path in "$INIT" "$SOURCE/train.jsonl" "$WAN/Wan-AI/Wan2.1-I2V-14B-480P" \

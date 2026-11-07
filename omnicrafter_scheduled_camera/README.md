@@ -14,7 +14,8 @@ also trains the SCoPE sibling (branch `omnicrafter-concat-scheduled-scope`, `CAM
 | camera module | UniRoPE v3: `prepare_unirope(footprint=True, adaptive_freqs=True)` + `unirope_attention` | RayRoPE: `prepare_geometry` + `rayrope_attention` from the same pinned `vendor/raycrafter_camera/rayrope.py`, as `configs/flux3_mix_rayrope.yaml` |
 | depth head attribute | `self_attn.unirope_depth` | `self_attn.rayrope_depth` (same `DepthHead`) |
 | steps | 50,000 → 350,000 | 50,000 → 100,000 (one pass over the 200k sets) |
-| machine | io105, shared-admission launcher | Skipjack, 4×H100, `rchella4_videolincs`, one 32 h job |
+| machine | io105, shared-admission launcher | Skipjack, 4×H100, `rchella4_videolincs`, one 36 h job |
+| `torch.compile` | on | off: RayRoPE's compiled functions run eagerly (see Porting) |
 
 How RayRoPE encodes each token:
 - The query camera's center, plus three patch-corner rays at the predicted depth.
@@ -50,6 +51,9 @@ Trainable: 802 inherited + 40 × 2 depth-head tensors = 882.
   All 1,361,608 mapped paths exist. Their contents were not compared with io104's.
 - **Near depth:** comes from `data_manifest/near_depth/`, whose hashes match `summary.json`. RayRoPE doesn't use it, but preflight still checks it.
 - **Launcher:** `preflight.py` reads the manifest in place. `train_4gpu.sbatch` replaces `queue_training.py`, `run_job.py` and the `queue_*.sh` scripts. It runs the preflight, then `gpu_smoke.py` on a fresh start, then `train.py`.
+- **No `torch.compile`:** `train_4gpu.sbatch` sets `TORCH_COMPILE_DISABLE=1`, as `omnicrafter_unirope` does. Triton builds
+  a C stub against `Python.h`, which this env's system Python doesn't have on Skipjack. The first job, 1597642, failed in
+  `gpu_smoke.py` on it. The functions are the same, but eager runs at about 2.2 s/step, so the walltime is 36 h.
 - **Full-state resume (`checkpoints.py`, `data_position.py`):** xliu253's `--restore-checkpoint` resets AdamW, the RNG and the data order. This run instead keeps `resume/` every 2000 steps and 30 min before the walltime. It holds:
   - the DeepSpeed weights and AdamW;
   - the scheduler and every RNG;

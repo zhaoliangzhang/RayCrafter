@@ -1,5 +1,6 @@
 """Short four-rank correctness check before WAN loading; no experiment saves."""
 import json
+import os
 import torch
 from accelerate import Accelerator,DeepSpeedPlugin
 from config import SOURCE,OUT,VARIANT
@@ -53,7 +54,7 @@ def main():
     if not any(not torch.equal(v,params[n]) for n,v in initial.items()):
         raise RuntimeError('New camera parameters did not update')
     report=dict(passed=True,variant=VARIANT,rank=acc.process_index,optimizer_device='cuda',zero_stage=2,
-                real_resolution_grids=True,compiled_geometry=True,new_parameters_updated=True,cases=results)
+                real_resolution_grids=True,compiled_geometry=os.environ.get('TORCH_COMPILE_DISABLE')!='1',new_parameters_updated=True,cases=results)
     (OUT/f'gpu_correctness_rank{acc.process_index}.json').write_text(json.dumps(report,indent=2)+'\n')
     print(json.dumps(report),flush=True)
     acc.wait_for_everyone();acc.end_training()
