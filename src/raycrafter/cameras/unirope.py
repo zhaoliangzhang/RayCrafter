@@ -2,8 +2,9 @@
 
 A token is one ray: its camera center ``c`` and unit direction ``u``, plus a
 point ``p = c + d·u`` at a predicted depth ``d``. Only the ray-generation
-function knows the camera model (:func:`pinhole_directions`;
-:func:`equirect_directions` for 360° panoramas); everything after it sees rays.
+function knows the camera model (:func:`camera_directions`: pinhole,
+:func:`fisheye_directions` for OpenCV fisheye lenses, :func:`equirect_directions`
+for 360° panoramas); everything after it sees rays.
 
 For each query camera, every token's ``c``, ``u`` and ``p`` are moved into that
 camera's frame with its SE(3) pose only (no intrinsics, no projection). ``p`` is
@@ -128,6 +129,84 @@ def pinhole_directions(
     return torch.stack(rays, dim=-2)
 
 
+def fisheye_unproject(x_d: torch.Tensor, y_d: torch.Tensor, dist: torch.Tensor) -> torch.Tensor:
+    """OpenCV fisheye (Kannala-Brandt, COLMAP ``OPENCV_FISHEYE``) normalized
+    distorted coordinates → camera-frame unit rays ``[..., 3]``.
+
+    The model maps a ray at angle θ from the optical axis to radius
+    ``θ_d = θ (1 + k1 θ² + k2 θ⁴ + k3 θ⁶ + k4 θ⁸)``; θ is recovered by Newton's
+    method (as ``cv2.fisheye.undistortPoints``). ``dist`` is ``[..., 4]``
+    (k1..k4), broadcast against ``x_d`` / ``y_d`` with one more trailing dim."""
+    k1, k2, k3, k4 = (dist[..., i, None].float() for i in range(4))
+    theta_d = torch.sqrt(x_d * x_d + y_d * y_d)
+    theta = theta_d.clone()
+    for _ in range(10):
+        t2 = theta * theta
+        poly = 1 + t2 * (k1 + t2 * (k2 + t2 * (k3 + t2 * k4)))
+        slope = 1 + t2 * (3 * k1 + t2 * (5 * k2 + t2 * (7 * k3 + t2 * 9 * k4)))
+        theta = theta - (theta * poly - theta_d) / slope
+    # Past 180° the model folds back; no lens here comes near that.
+    theta = theta.clamp(0.0, math.pi)
+    scale = torch.where(theta_d > 1e-8, torch.sin(theta) / theta_d.clamp(min=1e-8), torch.ones_like(theta_d))
+    return torch.stack((x_d * scale, y_d * scale, torch.cos(theta)), dim=-1)
+
+
+def fisheye_directions(
+    intrinsics: torch.Tensor,
+    image_hw: tuple[int, int],
+    latent_hw: tuple[int, int],
+    footprint: bool = False,
+    patch: int = 16,
+) -> torch.Tensor:
+    """:func:`pinhole_directions` for OpenCV fisheye cameras: ``intrinsics`` is
+    ``[B, N, 8]`` (fx, fy, cx, cy in pixels of the full image, then k1..k4).
+    Returns ``[B, N, h*w, R, 3]``, center ray first."""
+    height, width = image_hw
+    patches_y, patches_x = latent_hw
+    cropped_h, cropped_w = patches_y * patch, patches_x * patch
+    top = (height - cropped_h) // 2
+    left = (width - cropped_w) // 2
+    fx, fy = intrinsics[..., 0].float(), intrinsics[..., 1].float()
+    cx, cy = intrinsics[..., 2].float() - left, intrinsics[..., 3].float() - top
+
+    device = intrinsics.device
+    rays = []
+    for ox, oy in _offsets(footprint):
+        ys = (torch.arange(patches_y, device=device) + oy) * patch
+        xs = (torch.arange(patches_x, device=device) + ox) * patch
+        grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
+        x = (grid_x.flatten() - cx[..., None]) / fx[..., None]
+        y = (grid_y.flatten() - cy[..., None]) / fy[..., None]
+        rays.append(fisheye_unproject(x, y, intrinsics[..., 4:8]))
+    return torch.stack(rays, dim=-2)
+
+
+def camera_directions(
+    camera_model: str,
+    intrinsics: torch.Tensor,
+    image_hw: tuple[int, int],
+    latent_hw: tuple[int, int],
+    footprint: bool = False,
+    patch: int = 16,
+) -> torch.Tensor:
+    """Camera-frame unit rays ``[B, N, h*w, R, 3]`` of ``camera_model``: the one
+    place that knows the camera models. ``intrinsics`` is ``[B, N, 4]`` (pinhole),
+    ``[B, N, 8]`` (fisheye, + k1..k4) or unused (equirect, K = I)."""
+    if camera_model == "pinhole":
+        return pinhole_directions(intrinsics[..., :4], image_hw, latent_hw, footprint=footprint, patch=patch)
+    if camera_model == "fisheye":
+        if intrinsics.shape[-1] != 8:
+            raise ValueError(f"fisheye cameras need [fx, fy, cx, cy, k1..k4], got {intrinsics.shape[-1]} values")
+        return fisheye_directions(intrinsics, image_hw, latent_hw, footprint=footprint, patch=patch)
+    if camera_model == "equirect":
+        patches_y, patches_x = latent_hw
+        if (patches_y * patch, patches_x * patch) != tuple(image_hw):
+            raise ValueError(f"equirect image {image_hw} is not a whole number of {patch}px patches")
+        batch, cameras = intrinsics.shape[:2]
+        return equirect_directions(batch, cameras, latent_hw, intrinsics.device, footprint=footprint)
+    raise ValueError(f"unknown camera_model {camera_model!r}")
+
+
 def equirect_directions(
     batch: int, cameras: int, latent_hw: tuple[int, int], device, footprint: bool = False
 ) -> torch.Tensor:
@@ -157,16 +236,13 @@ def prepare_unirope(
     adaptive_freqs: bool = False,
 ) -> dict:
     """Normalized poses (RayRoPE's ``prepare_geometry``) plus camera-frame rays
-    ``[B, C, P, R, 3]`` from ``camera_model``'s generator (``fxfycxcy`` is unused
-    for ``equirect``). The camera model only changes ``directions``. With
-    ``adaptive_freqs``, also each camera's angular patch size ``[B, C]``.
+    ``[B, C, P, R, 3]`` from ``camera_model``'s generator (``fxfycxcy`` is
+    ``[B, C, 8]`` with the distortion for ``fisheye``, unused for ``equirect``).
+    The camera model only changes ``directions``. With ``adaptive_freqs``, also
+    each camera's angular patch size ``[B, C]``.
     """
     geom = prepare_geometry(c2w, fxfycxcy, image_hw, latent_hw, camera_model=camera_model)
-    if camera_model == "equirect":
-        batch, cameras = c2w.shape[:2]
-        rays = equirect_directions(batch, cameras, latent_hw, c2w.device, footprint=True)
-    else:
-        rays = pinhole_directions(fxfycxcy, image_hw, latent_hw, footprint=True)
+    rays = camera_directions(camera_model, fxfycxcy, image_hw, latent_hw, footprint=True)
     geom["directions"] = rays if footprint else rays[..., :1, :]
     if adaptive_freqs:
         geom["patch_angle"] = patch_angle(rays)

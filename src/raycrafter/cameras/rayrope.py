@@ -18,11 +18,12 @@ and camera 1 is at unit distance; the frequency ranges and depth clamps below
 assume that scale.
 
 Camera models (``camera_model``, one per batch): ``pinhole`` is the reference
-RayRoPE. ``equirect`` panoramas have no intrinsics (K = I): keys are
-back-projected along the panorama's pixel rays (``cameras.unirope``
-convention) at the predicted distance, and the query side keeps the reference
-projection (unit direction xy and z / w in the query camera), except that z
-keeps its sign, since half of a panorama lies behind any camera.
+RayRoPE. ``equirect`` panoramas and ``fisheye`` (OpenCV fisheye) views have no
+projective intrinsics (K = I): keys are back-projected along their pixel rays
+(``cameras.unirope`` generators) at the predicted distance, and the query side
+keeps the reference projection (unit direction xy and z / w in the query
+camera), except that z keeps its sign, since half of a panorama, and the rim of
+a wide fisheye view, lie behind or beside any camera.
 
 This file is backbone-free: it works on ``[B, heads, txt+img, head_dim]``
 tensors. ``backbones/flux2.py`` and ``backbones/flux3.py`` wire it into FLUX
@@ -52,7 +53,7 @@ MAX_D_F = 10.0
 FREQ_BASE = 3.0
 
 _OFFSETS = ((0.0, 0.0), (1.0, 0.0), (0.0, 1.0))
-CAMERA_MODELS = ("pinhole", "equirect")
+CAMERA_MODELS = ("pinhole", "fisheye", "equirect")
 
 # The compiled geometry and rotation (here and in unirope.py) see 2, 3 and 5
 # cameras on FLUX 3, with and without grad, and run again on the autograd
@@ -160,7 +161,9 @@ def prepare_geometry(
     Cameras are ordered ``[ref..., views...]``, the same order as packed tokens.
     Translations are scaled so camera 1 is at unit distance from camera 0
     (RayRoPE's ``_normalize_poses_identity_unit_distance``); a pair closer than
-    1e-2 is left unscaled. ``equirect`` cameras ignore ``fxfycxcy`` (K = I).
+    1e-2 is left unscaled. ``equirect`` cameras ignore ``fxfycxcy`` (K = I);
+    ``fisheye`` ones (``[B, N, 8]``, + k1..k4) use K = I too and keep their
+    patch-corner rays in ``pixel_rays`` ``[B, N, P, 3, 3]``.
     """
     if camera_model not in CAMERA_MODELS:
         raise ValueError(f"camera_model must be one of {CAMERA_MODELS}, got {camera_model!r}")
@@ -172,14 +175,20 @@ def prepare_geometry(
         relative = relative.clone()
         relative[:, :, :3, 3] /= scale[:, None, None]
     w2c = _invert_se3(relative)
-    if camera_model == "equirect":
+    pixel_rays = None
+    if camera_model in ("equirect", "fisheye"):
         projection, projection_inv = w2c, relative
+        if camera_model == "fisheye":
+            from .unirope import camera_directions  # unirope imports this module
+
+            rays = camera_directions("fisheye", fxfycxcy, image_hw, latent_hw, footprint=True)
+            pixel_rays = rays[..., 1:, :]
     else:
         k_norm = _normalize_k(_intrinsics(fxfycxcy.float()), image_hw)
         projection = torch.matmul(_lift_k(k_norm), w2c)
         projection_inv = torch.matmul(relative, _lift_k(_invert_k(k_norm)))
     patches_y, patches_x = latent_hw
-    return {
+    geom = {
         "c2w": relative,
         "w2c": w2c,
         "projection": projection,
@@ -189,6 +198,9 @@ def prepare_geometry(
         "num_cameras": int(c2w.shape[1]),
         "camera_model": camera_model,
     }
+    if pixel_rays is not None:
+        geom["pixel_rays"] = pixel_rays
+    return geom
 
 
 def _patch_uv(patches_x: int, patches_y: int, device: torch.device) -> torch.Tensor:
@@ -241,10 +253,13 @@ def _depths(raw: torch.Tensor, num_cameras: int, num_patches: int) -> torch.Tens
 
 def _world_points(projection_inv: torch.Tensor, rays: torch.Tensor, depths: torch.Tensor) -> torch.Tensor:
     """Back-project ``[ray, 1/d]`` with ``P^{-1}`` (``ray`` from :func:`_pixel_rays`:
-    ``[u, v, 1]`` for pinhole). ``depths`` is ``[2, B, C, P, R, 1]``."""
+    ``[u, v, 1]`` for pinhole, shared by every camera ``[P, R, 3]``; or per camera
+    ``[B, C, P, R, 3]``, fisheye). ``depths`` is ``[2, B, C, P, R, 1]``."""
     disparity = 1.0 / depths
     rays = rays.to(device=depths.device, dtype=depths.dtype)
-    rays = rays.view(1, 1, 1, *rays.shape).expand(2, depths.shape[1], depths.shape[2], -1, -1, -1)
+    if rays.ndim == 3:
+        rays = rays.view(1, 1, 1, *rays.shape)
+    rays = rays.expand(2, depths.shape[1], depths.shape[2], -1, -1, -1)
     homogeneous = torch.cat((rays, disparity), dim=-1)
     return torch.einsum("bcij,ebcprj->ebcpri", projection_inv, homogeneous)
 
@@ -324,10 +339,12 @@ def _coefficients(
     patches_x: int,
     patches_y: int,
     camera_model: str = "pinhole",
+    pixel_rays: Optional[torch.Tensor] = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """RoPE coefficients of one block (RayRoPE's ``_prepare_apply_fns``).
 
     World points are back-projected once, then expressed in each query camera.
+    ``pixel_rays`` ``[B, C, P, 3, 3]`` replaces the shared grid rays (fisheye).
     Returns query ``cos, sin`` ``[B, img, 48]`` (each token in its own camera)
     and key ``cos, sin`` ``[C, B, img, 48]`` (all tokens, per query camera).
     """
@@ -336,9 +353,10 @@ def _coefficients(
     num_patches = patches_y * patches_x
     img_len = num_cameras * num_patches
     depths = _depths(raw_depth.float(), num_cameras, num_patches)
-    pixel_rays = _pixel_rays(patches_x, patches_y, camera_model, raw_depth.device)
+    if pixel_rays is None:
+        pixel_rays = _pixel_rays(patches_x, patches_y, camera_model, raw_depth.device)
     world = _world_points(projection_inv, pixel_rays, depths)
-    signed_depth = camera_model == "equirect"
+    signed_depth = camera_model != "pinhole"
 
     cos_k, sin_k, query_centers, query_rays = [], [], [], []
     for camera_index in range(num_cameras):
@@ -416,7 +434,7 @@ def merge_channels(kept: torch.Tensor, camera_channels: torch.Tensor, rope_axis:
 def subset_geometry(geom: dict, start: int, end: int) -> dict:
     """Geometry of cameras ``start:end``, in the same normalized frame."""
     out = dict(geom)
-    for key in ("c2w", "w2c", "projection", "projection_inv", "directions", "patch_angle"):
+    for key in ("c2w", "w2c", "projection", "projection_inv", "directions", "patch_angle", "pixel_rays"):
         if key in geom:
             out[key] = geom[key][:, start:end]
     out["num_cameras"] = end - start
@@ -473,6 +491,7 @@ def rayrope_attention(
         cos_q, sin_q, cos_k, sin_k = _coefficients(
             geom["c2w"], geom["w2c"], geom["projection"], geom["projection_inv"],
             raw_depth, geom["patches_x"], geom["patches_y"], geom.get("camera_model", "pinhole"),
+            geom.get("pixel_rays"),
         )
     return per_camera_attention(
         q_content, k_content, v, q_rope, k_rope, num_txt, cos_q, sin_q, cos_k, sin_k,

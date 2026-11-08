@@ -24,7 +24,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
 
-from .unirope import equirect_directions
+from .unirope import camera_directions
 
 # Fourier direction features (``dir_freqs``): periods over a unit-vector component.
 # Longest = 4x its range [-1, 1] (RayRoPE's rule); shortest resolves adjacent tokens
@@ -72,13 +72,13 @@ def plucker_tokens(
 
     Args:
         c2w: ``[B, N, 4, 4]`` camera-to-world (OpenCV convention).
-        fxfycxcy: ``[B, N, 4]`` pinhole intrinsics in pixels of the full image
-            (unused for ``equirect``).
+        fxfycxcy: ``[B, N, 4]`` pinhole intrinsics in pixels of the full image,
+            ``[B, N, 8]`` with k1..k4 for ``fisheye`` (unused for ``equirect``).
         image_hw: ``(H, W)`` of the image given to the VAE.
         latent_hw: ``(h, w)`` token grid, one token per ``patch × patch`` pixels.
-        camera_model: ``pinhole`` (released SCoPE) or ``equirect``: the ray
-            through each token center of a full panorama (``cameras.unirope``
-            convention).
+        camera_model: ``pinhole`` (released SCoPE), ``fisheye`` (OpenCV fisheye)
+            or ``equirect``: the ray through each token center of a full
+            panorama (``cameras.unirope`` convention).
         patch_size: append the patch's angular size, a 7th channel (see
             :func:`_patch_log_size`).
 
@@ -96,11 +96,9 @@ def plucker_tokens(
     relative = torch.linalg.inv(c2w[:, :1]) @ c2w
 
     device = c2w.device
-    if camera_model == "equirect":
-        if (cropped_h, cropped_w) != (height, width):
-            raise ValueError(f"equirect image {height}x{width} is not a whole number of {patch}px patches")
+    if camera_model in ("equirect", "fisheye"):
         batch, cameras = c2w.shape[:2]
-        rays = equirect_directions(batch, cameras, latent_hw, device, footprint=patch_size)
+        rays = camera_directions(camera_model, fxfycxcy, image_hw, latent_hw, footprint=patch_size, patch=patch)
         rays = rays.reshape(batch, cameras, patches_y, patches_x, -1, 3)
         directions = rays[..., 0, :]
         corners = rays[..., 1:, :] if patch_size else None
