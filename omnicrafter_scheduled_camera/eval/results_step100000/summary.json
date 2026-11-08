@@ -1,0 +1,193 @@
+{
+  "HM3D_strict_definition": "exclude 21 target/reference overlaps for extra strict scores; retain original inference groups",
+  "camera_injection": "concat_scheduled_scope_ff",
+  "checkpoint": "/cis/net/io81/data/xliu253/omniraycrafter/mixed_concat_scheduled_scope_ff_q3center_50kinit_dl3dv100k_hm3d60k_jhu40k_b1_plus300k_io104/step-100000.safetensors",
+  "checkpoint_sha256": "fe69987bfcbf640a879ce852f7818373faf6346dd8611e1edadf0e481f8ce254",
+  "complete": true,
+  "fid_caveat": "Dataset-level Clean-FID; pooled category FID computed from pooled features, not averaged per-dataset FIDs. Small correlated test sets, especially Replica 204, limit FID reliability.",
+  "inference_steps": 20,
+  "joint_queries": 3,
+  "manifest_sha256": "e9701d0a435645638cd69f11a76b9c802892309c92f206da7b5449afc7162536",
+  "metric_protocol": {
+    "dreamsim": "official ensemble distance",
+    "fid": "Clean-FID clean mode, Inception 2048-D, dataset-level",
+    "gt_resize": "PIL bilinear to requested output resolution before every metric; no prediction resize",
+    "lpips": "VGG"
+  },
+  "metric_versions": {
+    "clean-fid": "0.1.35",
+    "dreamsim": "0.2.1",
+    "lpips": "0.1.4",
+    "numpy": "1.26.4",
+    "peft": "0.13.2",
+    "scikit-image": "0.25.2",
+    "timm": "0.6.13",
+    "torch": "2.4.0+cu118",
+    "torchvision": "0.19.0+cu118",
+    "transformers": "4.44.2"
+  },
+  "paired_task_noise_verified": true,
+  "pose_normalization": "Third query full SE3 origin for every branch; unchanged mean-distance concat scale; scene-near-depth SCoPE-FF.",
+  "reference_views": 2,
+  "resolutions_wh": {
+    "panorama": [
+      512,
+      256
+    ],
+    "perspective": [
+      512,
+      288
+    ]
+  },
+  "results": {
+    "cleanup": {
+      "DL3DV": {
+        "dreamsim": 0.04565610628042902,
+        "fid": 5.91226631064427,
+        "lpips": 0.2308501502206283,
+        "psnr": 21.20158510943132,
+        "sets": 2800,
+        "ssim": 0.6672164965021823,
+        "targets": 8400
+      },
+      "HM3D": {
+        "dreamsim": 0.027522048910740702,
+        "fid": 15.140024571520712,
+        "lpips": 0.14539648280710193,
+        "psnr": 25.231249276144446,
+        "sets": 423,
+        "ssim": 0.8169195140976903,
+        "targets": 1269
+      },
+      "HM3D_strict": {
+        "dreamsim": 0.02780554195245107,
+        "fid": 15.446651476568832,
+        "lpips": 0.14677709953274387,
+        "psnr": 25.1445277552247,
+        "sets": 423,
+        "ssim": 0.8152447439825687,
+        "targets": 1248
+      },
+      "JHU": {
+        "dreamsim": 0.07201433459917704,
+        "fid": 34.44071230392646,
+        "lpips": 0.30963120420773826,
+        "psnr": 19.314403301775762,
+        "sets": 500,
+        "ssim": 0.5009522049725056,
+        "targets": 1500
+      },
+      "Replica": {
+        "dreamsim": 0.018652680457807054,
+        "fid": 31.83716948360211,
+        "lpips": 0.09761968083387497,
+        "psnr": 27.45334165648845,
+        "sets": 68,
+        "ssim": 0.893039321198183,
+        "targets": 204
+      },
+      "panorama": {
+        "dreamsim": 0.049361630938408396,
+        "fid": 16.427839456813842,
+        "lpips": 0.22498128418564756,
+        "psnr": 22.398433226375577,
+        "sets": 991,
+        "ssim": 0.6627242490323433,
+        "targets": 2973
+      },
+      "panorama_strict": {
+        "dreamsim": 0.04963684453550716,
+        "fid": 16.59268349363134,
+        "lpips": 0.22613111159166063,
+        "psnr": 22.34161832286847,
+        "sets": 991,
+        "ssim": 0.6609192986021116,
+        "targets": 2952
+      },
+      "perspective": {
+        "dreamsim": 0.04565610628042902,
+        "fid": 5.91226631064427,
+        "lpips": 0.2308501502206283,
+        "psnr": 21.20158510943132,
+        "sets": 2800,
+        "ssim": 0.6672164965021823,
+        "targets": 8400
+      }
+    },
+    "nvs": {
+      "DL3DV": {
+        "dreamsim": 0.04757620121751513,
+        "fid": 6.119517315233907,
+        "lpips": 0.24379033148333076,
+        "psnr": 20.59532994201763,
+        "sets": 2800,
+        "ssim": 0.635468680793863,
+        "targets": 8400
+      },
+      "HM3D": {
+        "dreamsim": 0.028682843026821777,
+        "fid": 15.165697809194,
+        "lpips": 0.15465375090310007,
+        "psnr": 24.701544953951185,
+        "sets": 423,
+        "ssim": 0.794420497331965,
+        "targets": 1269
+      },
+      "HM3D_strict": {
+        "dreamsim": 0.028993854872309245,
+        "fid": 15.487287680038378,
+        "lpips": 0.15627422922840103,
+        "psnr": 24.593419942529525,
+        "sets": 423,
+        "ssim": 0.7922106399797858,
+        "targets": 1248
+      },
+      "JHU": {
+        "dreamsim": 0.07197207987308502,
+        "fid": 34.14284380963235,
+        "lpips": 0.3103378711342812,
+        "psnr": 19.34603915617529,
+        "sets": 500,
+        "ssim": 0.4976160776615143,
+        "targets": 1500
+      },
+      "Replica": {
+        "dreamsim": 0.018512695151216844,
+        "fid": 30.448608801367925,
+        "lpips": 0.09921360766405568,
+        "psnr": 27.008871764328184,
+        "sets": 68,
+        "ssim": 0.8887451396268957,
+        "targets": 204
+      },
+      "panorama": {
+        "dreamsim": 0.04982618144013205,
+        "fid": 16.337968529985403,
+        "lpips": 0.22939858478335792,
+        "psnr": 22.157796542465505,
+        "sets": 991,
+        "ssim": 0.6511428644771011,
+        "targets": 2973
+      },
+      "panorama_strict": {
+        "dreamsim": 0.05010807605051413,
+        "fid": 16.505629349152514,
+        "lpips": 0.2306153864301943,
+        "psnr": 22.093989384303093,
+        "sets": 991,
+        "ssim": 0.6491893643871717,
+        "targets": 2952
+      },
+      "perspective": {
+        "dreamsim": 0.04757620121751513,
+        "fid": 6.119517315233907,
+        "lpips": 0.24379033148333076,
+        "psnr": 20.59532994201763,
+        "sets": 2800,
+        "ssim": 0.635468680793863,
+        "targets": 8400
+      }
+    }
+  },
+  "time": "2026-11-06T22:08:35-05:00"
+}

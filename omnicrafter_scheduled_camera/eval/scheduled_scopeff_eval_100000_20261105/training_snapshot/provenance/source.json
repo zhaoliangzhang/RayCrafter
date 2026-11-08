@@ -1,0 +1,12 @@
+{
+  "source": "/cis/home/xliu253/Documents/RayCrafter",
+  "commit": "3458c26f608b750150a4180e8c6ecc4ba2ed65f5",
+  "sha256": {
+    "vendor/raycrafter_camera/scope.py": "a4ee3eff74562295478e8d7cceb8db08f547069a80381d785ee4cf6af3f1557a",
+    "vendor/raycrafter_camera/unirope.py": "0afbf4f0718dc26085e8c96297668181aeeb632914b1712baa704b56309a0137",
+    "vendor/raycrafter_camera/rayrope.py": "0aa170227bda27daede3a941bdffd0e1297e3c576782aaaa01533c928e698eda",
+    "provenance/flux3_mix_scope_ff_unirope_v3.yaml": "92a6a94810d6f65aba8e9e97f2c988ec9a8926d0c6d0785d8db860b89fe69041",
+    "provenance/RAYCRAFTER_TRAINING_NOTES.md": "f4cdb85323c12bafcb49be74df5cd9f6f8ceba0ebe0a611de91b9e5d622114b4"
+  }
+}
+

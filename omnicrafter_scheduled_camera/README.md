@@ -21,6 +21,8 @@ and io105's launcher.
   - the launch command, preflight and protocol
   - the trainable parameters
   - the GPU correctness, gate-zero parity and optimizer-on-GPU checks
+- `eval/` is xliu253's inference and evaluation of the step-100000 checkpoint on the shared benchmark, with its results.
+  See `eval/README.md`.
 
 ## The run
 
