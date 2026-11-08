@@ -1,0 +1,12 @@
+{
+  "diffusion_pytorch_model-00001-of-00007.safetensors": "09c0170242cfe9598208724585196ca18f294928fe25971149e1d7b37b3b51d6",
+  "diffusion_pytorch_model-00002-of-00007.safetensors": "9e9dd8069241f0cbfe8f269e784e915ddaa7f177272b9850ae88c494d418c181",
+  "diffusion_pytorch_model-00003-of-00007.safetensors": "22af36eb620c381d57a2dd5d5e3a001bf90ba0ca32f2d5013d6ca45225b11d5f",
+  "diffusion_pytorch_model-00004-of-00007.safetensors": "5c2be0421b8df4a8e7dd31cdbb6489567438ae14b812b57518e43c6f4e49a755",
+  "diffusion_pytorch_model-00005-of-00007.safetensors": "0ba7f3ab69f414f23e5566e607b9385a8f67907302cbaaf86507b3a826a20dda",
+  "diffusion_pytorch_model-00006-of-00007.safetensors": "d7287e9233cbf67a75fce8ef8be24232ec93d6336f148972465db00008d69e28",
+  "diffusion_pytorch_model-00007-of-00007.safetensors": "d1bc30f07b162c34b90e4ee4a349f81b6e1a3a342187ea9ea153c9e4dbb07676",
+  "models_t5_umt5-xxl-enc-bf16.pth": "7cace0da2b446bbbbc57d031ab6cf163a3d59b366da94e5afe36745b746fd81d",
+  "Wan2.1_VAE.pth": "38071ab59bd94681c686fa51d75a1968f64e470262043be31f7a094e442fd981",
+  "models_clip_open-clip-xlm-roberta-large-vit-huge-14.pth": "628c9998b613391f193eb67ff68da9667d75f492911e4eb3decf23460a158c38"
+}
